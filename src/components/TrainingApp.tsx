@@ -72,6 +72,26 @@ const databases: PlayerDatabase[] = [
     setIds: ['shohan-master', 'shohan-mates', 'shohan-openings', 'shohan-defenses'],
   },
   {
+    id: 'mehrab',
+    name: 'Mehrab Ayaz',
+    rating: '~2215 Rapid',
+    icon: '⚔️',
+    tag: '3,938 Games (2026)',
+    description: 'Master tactical blunders, sharp knockout attacks & opening traps from 2026.',
+    available: true,
+    setIds: ['mehrab-master', 'mehrab-mates', 'mehrab-openings'],
+  },
+  {
+    id: 'jharapritom',
+    name: 'Jhara Pritom',
+    rating: '~1685 Rapid',
+    icon: '🎯',
+    tag: '2,043 Games (2026)',
+    description: 'Missed knockout combinations, forced mates & tactical oversights from 2026.',
+    available: true,
+    setIds: ['jharapritom-master', 'jharapritom-mates', 'jharapritom-openings'],
+  },
+  {
     id: 'grandmasters',
     name: 'Immortal Grandmasters',
     rating: '2600 - 2850 Elo',
@@ -80,26 +100,6 @@ const databases: PlayerDatabase[] = [
     description: 'Immortal historical combinations from Morphy, Fischer, Kasparov & Tal.',
     available: true,
     setIds: ['world-champions'],
-  },
-  {
-    id: 'player2',
-    name: 'Player 2',
-    rating: 'Custom PGN',
-    icon: '👤',
-    tag: 'Coming Soon',
-    description: 'Slot reserved for next player database upload.',
-    available: false,
-    setIds: [],
-  },
-  {
-    id: 'player3',
-    name: 'Player 3',
-    rating: 'Custom PGN',
-    icon: '👤',
-    tag: 'Coming Soon',
-    description: 'Slot reserved for next player database upload.',
-    available: false,
-    setIds: [],
   },
 ];
 
@@ -900,10 +900,10 @@ export const TrainingApp: React.FC = () => {
                         : currentPuzzle.id === 'classic-007'
                         ? 'Garry Kasparov'
                         : 'Mikhail Botvinnik')
-                    : 'ShohanTheRock'}
+                    : activePlayer.name}
                 </span>
                 <span className="text-amber-400 font-mono text-[10px] sm:text-xs font-medium">
-                  ({currentPuzzle.player_rating || 2280})
+                  ({currentPuzzle.player_rating || activePlayer.rating})
                 </span>
               </div>
               <span className="text-[#7e7b73] font-mono text-[10px] sm:text-[11px]">
@@ -1178,15 +1178,18 @@ export const TrainingApp: React.FC = () => {
               </div>
             </div>
 
-            {/* Step 2: If Shohan selected, choose Collection */}
-            {selectedPlayerForSubmenu === 'shohan' && (
+            {/* Step 2: If player has collections, choose Collection */}
+            {selectedPlayerForSubmenu && selectedPlayerForSubmenu !== 'grandmasters' && (
               <div className="space-y-2 pt-2 border-t border-[#2d2b25] animate-fadeIn">
                 <label className="text-xs font-bold text-[#aaa] uppercase tracking-wider block">
                   2. Choose Training Collection
                 </label>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                   {allSets
-                    .filter((s) => s.id !== 'world-champions')
+                    .filter((s) => {
+                      const dbItem = databases.find((d) => d.id === selectedPlayerForSubmenu);
+                      return dbItem ? dbItem.setIds.includes(s.id) : false;
+                    })
                     .map((s) => {
                       const isSelected = s.id === currentSetId;
                       return (
