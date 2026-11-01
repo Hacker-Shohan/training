@@ -6,7 +6,7 @@ import { LichessBoard } from './LichessBoard';
 import { EvalBar } from './EvalBar';
 import { sounds } from '../utils/sound';
 import { browserEngine, EngineEvaluation } from '../utils/engine';
-import type { ChessPuzzle } from '../types';
+import type { ChessPuzzle, PuzzleSet } from '../types';
 import defaultPuzzlesData from '../data/puzzles.json';
 
 // Convert chess.js instance to chessground dests map
@@ -26,23 +26,59 @@ function toDests(chess: Chess): Map<Key, Key[]> {
   return dests;
 }
 
-const defaultPuzzlesList: ChessPuzzle[] =
-  (defaultPuzzlesData as { puzzles: ChessPuzzle[] }).puzzles || [];
-const firstPuzzle: ChessPuzzle = defaultPuzzlesList[0];
+interface DatabasePayload {
+  version?: string;
+  trainer_name?: string;
+  total_sets?: number;
+  sets?: PuzzleSet[];
+  puzzles?: ChessPuzzle[];
+}
+
+const db = defaultPuzzlesData as unknown as DatabasePayload;
+const allSets: PuzzleSet[] = (db.sets && db.sets.length > 0)
+  ? db.sets
+  : [
+      {
+        id: 'shohan-master',
+        title: 'Shohan: Master Blunders',
+        subtitle: '120 critical tactical misses (~2280 Rapid)',
+        icon: '🎯',
+        badge: '120 Puzzles',
+        puzzles: db.puzzles || [],
+      },
+    ];
+
+const initialSet = allSets[0];
+const initialPuzzle = initialSet.puzzles[0];
 
 export const TrainingApp: React.FC = () => {
   // Engine loading screen state
   const [engineLoading, setEngineLoading] = useState<boolean>(true);
   const [engineProgress, setEngineProgress] = useState<number>(15);
 
-  // Puzzles dataset
-  const [allPuzzles] = useState<ChessPuzzle[]>(defaultPuzzlesList);
+  // Active Puzzle Set selection
+  const [currentSetId, setCurrentSetId] = useState<string>(() => {
+    try {
+      const saved = localStorage.getItem('thetrainer_active_set');
+      if (saved && allSets.some((s) => s.id === saved)) return saved;
+    } catch {}
+    return initialSet.id;
+  });
+  const [isSetMenuOpen, setIsSetMenuOpen] = useState<boolean>(false);
+
+  const currentSet = useMemo(() => {
+    return allSets.find((s) => s.id === currentSetId) || allSets[0];
+  }, [currentSetId]);
+
+  const allPuzzles = currentSet.puzzles;
 
   // Solved IDs from localStorage
   const [solvedIds, setSolvedIds] = useState<Set<string>>(() => {
     try {
-      const saved = localStorage.getItem('shohan_training_solved');
-      return saved ? new Set(JSON.parse(saved)) : new Set();
+      const saved = localStorage.getItem('thetrainer_solved_puzzles');
+      if (saved) return new Set(JSON.parse(saved));
+      const legacy = localStorage.getItem('shohan_training_solved');
+      return legacy ? new Set(JSON.parse(legacy)) : new Set();
     } catch {
       return new Set();
     }
@@ -51,8 +87,10 @@ export const TrainingApp: React.FC = () => {
   // Streak
   const [streak, setStreak] = useState<number>(() => {
     try {
-      const saved = localStorage.getItem('shohan_training_streak');
-      return saved ? parseInt(saved, 10) : 0;
+      const saved = localStorage.getItem('thetrainer_streak');
+      if (saved) return parseInt(saved, 10);
+      const legacy = localStorage.getItem('shohan_training_streak');
+      return legacy ? parseInt(legacy, 10) : 0;
     } catch {
       return 0;
     }
@@ -69,7 +107,7 @@ export const TrainingApp: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [isDrawerOpen, setIsDrawerOpen] = useState<boolean>(false);
 
-  // Filtered puzzle list
+  // Filtered puzzle list in active set
   const filteredPuzzles = useMemo(() => {
     return allPuzzles.filter((p) => {
       if (themeFilter !== 'all') {
@@ -95,21 +133,21 @@ export const TrainingApp: React.FC = () => {
 
   // Current Index in filtered list
   const [filteredIndex, setFilteredIndex] = useState<number>(0);
-  const currentPuzzle = filteredPuzzles[filteredIndex] || allPuzzles[0] || firstPuzzle;
+  const currentPuzzle = filteredPuzzles[filteredIndex] || allPuzzles[0] || initialPuzzle;
 
-  // Board & Chess State - initialized with firstPuzzle to guarantee instant display
+  // Board & Chess State
   const [chess, setChess] = useState<Chess>(() => {
     try {
-      return new Chess(firstPuzzle?.fen);
+      return new Chess(currentPuzzle?.fen);
     } catch {
       return new Chess();
     }
   });
-  const [boardFen, setBoardFen] = useState<string>(() => firstPuzzle?.fen || '');
-  const [orientation, setOrientation] = useState<'white' | 'black'>(() => firstPuzzle?.player_color || 'white');
+  const [boardFen, setBoardFen] = useState<string>(() => currentPuzzle?.fen || '');
+  const [orientation, setOrientation] = useState<'white' | 'black'>(() => currentPuzzle?.player_color || 'white');
   const [dests, setDests] = useState<Map<Key, Key[]>>(() => {
     try {
-      return toDests(new Chess(firstPuzzle?.fen));
+      return toDests(new Chess(currentPuzzle?.fen));
     } catch {
       return new Map();
     }
@@ -135,7 +173,7 @@ export const TrainingApp: React.FC = () => {
   }>({
     type: 'turn',
     title: 'Your turn',
-    subtitle: `Find the best move for ${firstPuzzle?.turn || 'White'}!`,
+    subtitle: `Find the best move for ${currentPuzzle?.turn || 'White'}!`,
   });
 
   // Simulated Engine Download & Init Screen
@@ -157,6 +195,20 @@ export const TrainingApp: React.FC = () => {
   // Force snapback helper
   const forceResetBoard = useCallback(() => {
     setBoardRevision((r) => r + 1);
+  }, []);
+
+  // Switch Active Puzzle Set
+  const handleSelectSet = useCallback((setId: string) => {
+    setCurrentSetId(setId);
+    setFilteredIndex(0);
+    setThemeFilter('all');
+    setColorFilter('all');
+    setStatusFilter('all');
+    setSearchQuery('');
+    setIsSetMenuOpen(false);
+    try {
+      localStorage.setItem('thetrainer_active_set', setId);
+    } catch {}
   }, []);
 
   // Load / Reset Puzzle
@@ -215,17 +267,17 @@ export const TrainingApp: React.FC = () => {
   const onPuzzleComplete = useCallback(() => {
     sounds.playSuccess();
     setIsCompleted(true);
-    setViewOnly(false); // allow free analysis after completion
+    setViewOnly(false);
 
     setSolvedIds((prev) => {
       const next = new Set(prev).add(currentPuzzle.id);
-      localStorage.setItem('shohan_training_solved', JSON.stringify([...next]));
+      localStorage.setItem('thetrainer_solved_puzzles', JSON.stringify([...next]));
       return next;
     });
 
     setStreak((prev) => {
       const next = prev + 1;
-      localStorage.setItem('shohan_training_streak', String(next));
+      localStorage.setItem('thetrainer_streak', String(next));
       return next;
     });
 
@@ -241,7 +293,6 @@ export const TrainingApp: React.FC = () => {
     (orig: Key, dest: Key) => {
       if (viewOnly || isAutoPlayingRef.current) return;
 
-      // Wrap in try-catch to prevent chess.js 1.0.0-beta uncaught exceptions
       const tempChess = new Chess(chess.fen());
       let move: any = null;
       try {
@@ -312,7 +363,6 @@ export const TrainingApp: React.FC = () => {
           },
         ]);
 
-        // Calculate the last user ply index in this line
         const lastUserPly =
           continuation.length > 0
             ? continuation.length % 2 === 0
@@ -320,7 +370,6 @@ export const TrainingApp: React.FC = () => {
               : continuation.length - 1
             : 0;
 
-        // Check if game is over (mate) or user reached the end of their required moves
         if (tempChess.isGameOver() || currentPly >= lastUserPly) {
           onPuzzleComplete();
           return;
@@ -356,17 +405,14 @@ export const TrainingApp: React.FC = () => {
                 setDests(toDests(oppChess));
                 setViewOnly(false);
 
-                // If opponent got checkmated
                 if (oppChess.isGameOver()) {
                   onPuzzleComplete();
                   return;
                 }
 
-                // If reached full continuation length
                 if (postOppMoves.length >= continuation.length) {
                   onPuzzleComplete();
                 } else {
-                  // User's turn for next move
                   setStatusText({
                     type: 'turn',
                     title: 'Your turn',
@@ -377,7 +423,7 @@ export const TrainingApp: React.FC = () => {
                 onPuzzleComplete();
               }
             } catch (err) {
-              console.warn('Opponent reply failed:', err);
+              console.warn('Opponent auto-move error:', err);
               onPuzzleComplete();
             }
           }, 350);
@@ -388,7 +434,7 @@ export const TrainingApp: React.FC = () => {
         // --- 3. PLAYED GAME BLUNDER ---
         sounds.playError();
         setStreak(0);
-        localStorage.setItem('shohan_training_streak', '0');
+        localStorage.setItem('thetrainer_streak', '0');
 
         setShapes([
           {
@@ -400,10 +446,9 @@ export const TrainingApp: React.FC = () => {
         setStatusText({
           type: 'blunder',
           title: `Game Blunder (${move.san})!`,
-          subtitle: `That's what you played in the game! Eval crashed from ${currentPuzzle.eval_before} to ${currentPuzzle.eval_after_played}.`,
+          subtitle: `That's what was played in the game! Eval crashed from ${currentPuzzle.eval_before} to ${currentPuzzle.eval_after_played}.`,
         });
 
-        // Snap back piece after short delay
         setTimeout(() => {
           forceResetBoard();
         }, 350);
@@ -411,7 +456,7 @@ export const TrainingApp: React.FC = () => {
         // --- 4. INCORRECT MOVE ---
         sounds.playError();
         setStreak(0);
-        localStorage.setItem('shohan_training_streak', '0');
+        localStorage.setItem('thetrainer_streak', '0');
 
         setShapes([
           {
@@ -426,7 +471,6 @@ export const TrainingApp: React.FC = () => {
           subtitle: 'That is not the winning continuation. Try again!',
         });
 
-        // Snap back piece after short delay
         setTimeout(() => {
           forceResetBoard();
         }, 350);
@@ -435,7 +479,7 @@ export const TrainingApp: React.FC = () => {
     [chess, currentPuzzle, playedMoves, viewOnly, isCompleted, onPuzzleComplete, forceResetBoard]
   );
 
-  // Auto-play the full solution sequence till the end
+  // Auto-play solution sequence
   const handleAutoPlaySolution = useCallback(() => {
     if (isAutoPlayingRef.current) return;
     isAutoPlayingRef.current = true;
@@ -491,13 +535,12 @@ export const TrainingApp: React.FC = () => {
     playNextStep();
   }, [currentPuzzle, onPuzzleComplete]);
 
-  // Hint button (draws subtle arrow on piece)
+  // Hint button
   const handleHint = useCallback(() => {
     if (!currentPuzzle) return;
     const continuation = currentPuzzle.continuation_san || [];
     const targetSan = continuation[playedMoves.length] || currentPuzzle.best_move_san;
 
-    // Find piece to move in current position
     const moves = chess.moves({ verbose: true });
     const targetMove = moves.find((m) => m.san === targetSan);
 
@@ -609,6 +652,9 @@ export const TrainingApp: React.FC = () => {
   }, [handleNext, handlePrev, handleHint, handleAutoPlaySolution, handleShowGameBlunder, handleFlip, handleSoundToggle]);
 
   const isCurrentSolved = solvedIds.has(currentPuzzle?.id || '');
+  const solvedCountInActiveSet = useMemo(() => {
+    return allPuzzles.filter((p) => solvedIds.has(p.id)).length;
+  }, [allPuzzles, solvedIds]);
 
   // Live arrow from browser engine if in analysis mode
   const combinedShapes = useMemo(() => {
@@ -633,7 +679,7 @@ export const TrainingApp: React.FC = () => {
           <div className="w-14 h-14 rounded-2xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-3xl animate-bounce">
             ♟
           </div>
-          <h2 className="text-lg font-bold text-white tracking-wide">ShohanTraining</h2>
+          <h2 className="text-xl font-black text-white tracking-wide">TheTrainer</h2>
           <p className="text-xs text-[#888]">Loading Stockfish Engine (WASM)...</p>
           <div className="w-56 h-1.5 bg-[#2d2b25] rounded-full overflow-hidden">
             <div
@@ -652,29 +698,87 @@ export const TrainingApp: React.FC = () => {
               ♞
             </div>
             <div>
-              <h1 className="text-sm font-bold text-white tracking-wide leading-none">
-                ShohanTraining
+              <h1 className="text-sm font-extrabold text-white tracking-wide leading-none">
+                TheTrainer
               </h1>
-              <span className="text-[10px] text-[#7e7b73] font-mono leading-none">
-                Lichess-Powered Trainer
+              <span className="text-[10px] text-amber-400/90 font-mono leading-none">
+                Tactical Engine Lab
               </span>
             </div>
           </div>
 
-          <div className="hidden md:flex items-center gap-1.5 ml-4 pl-4 border-l border-[#2d2b25] text-xs">
-            <span className="text-[#888]">Player:</span>
-            <span className="font-semibold text-white">ShohanTheRock</span>
-            <span className="bg-amber-500/10 text-amber-400 font-mono text-[11px] px-1.5 py-0.5 rounded border border-amber-500/20">
-              ~2280 Rapid
-            </span>
+          {/* Puzzle Set Selector Dropdown */}
+          <div className="relative ml-2">
+            <button
+              onClick={() => setIsSetMenuOpen((prev) => !prev)}
+              className="flex items-center gap-2 bg-[#262420] hover:bg-[#322f2a] text-white px-3 py-1.5 rounded-xl border border-[#3d3a33] text-xs font-semibold shadow-sm transition active:scale-95"
+              title="Switch Puzzle Set / Collection"
+            >
+              <span className="text-sm">{currentSet.icon}</span>
+              <span className="font-bold hidden sm:inline">{currentSet.title}</span>
+              <span className="sm:hidden font-bold">{currentSet.title.split(':')[0]}</span>
+              <span className="text-[10px] bg-amber-500/20 text-amber-300 px-1.5 py-0.5 rounded font-mono border border-amber-500/30">
+                {currentSet.puzzles.length}
+              </span>
+              <span className="text-[#888] text-[9px]">▼</span>
+            </button>
+
+            {isSetMenuOpen && (
+              <>
+                <div
+                  className="fixed inset-0 z-40"
+                  onClick={() => setIsSetMenuOpen(false)}
+                />
+                <div className="absolute left-0 mt-2 w-80 bg-[#1e1c18] border border-[#3d3a33] rounded-2xl shadow-2xl p-2 z-50 space-y-1 animate-fadeIn">
+                  <div className="px-3 py-2 text-[10px] font-bold text-[#888] uppercase tracking-wider border-b border-[#2d2b25]">
+                    Select Puzzle Set
+                  </div>
+                  {allSets.map((s) => {
+                    const isSelected = s.id === currentSetId;
+                    const solvedInThisSet = s.puzzles.filter((p) => solvedIds.has(p.id)).length;
+                    return (
+                      <button
+                        key={s.id}
+                        onClick={() => handleSelectSet(s.id)}
+                        className={`w-full text-left p-2.5 rounded-xl transition flex items-center justify-between ${
+                          isSelected
+                            ? 'bg-[#2b2720] border border-amber-500/50 text-white'
+                            : 'hover:bg-[#262420] text-[#ccc] border border-transparent'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2.5 overflow-hidden">
+                          <span className="text-xl shrink-0">{s.icon}</span>
+                          <div className="truncate">
+                            <div className="font-bold text-xs text-white truncate">
+                              {s.title}
+                            </div>
+                            <div className="text-[10px] text-[#888] truncate">
+                              {s.subtitle}
+                            </div>
+                          </div>
+                        </div>
+                        <div className="text-right shrink-0 ml-2 font-mono text-[10px]">
+                          <span className="text-amber-400 font-bold block">
+                            {s.puzzles.length}
+                          </span>
+                          <span className="text-[#7e7b73]">
+                            {solvedInThisSet} solved
+                          </span>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </>
+            )}
           </div>
         </div>
 
         {/* Header Stats & Controls */}
         <div className="flex items-center gap-2 text-xs">
           <div className="hidden sm:flex items-center gap-1.5 bg-[#161512] border border-[#2d2b25] px-2.5 py-1 rounded-lg">
-            <span className="text-emerald-400 font-bold">{solvedIds.size}</span>
-            <span className="text-[#7e7b73]">/ {allPuzzles.length} Solved</span>
+            <span className="text-emerald-400 font-bold">{solvedCountInActiveSet}</span>
+            <span className="text-[#7e7b73]">/ {allPuzzles.length} in Set</span>
           </div>
 
           <div className="flex items-center gap-1.5 bg-[#161512] border border-[#2d2b25] px-2.5 py-1 rounded-lg">
@@ -733,14 +837,16 @@ export const TrainingApp: React.FC = () => {
                     Depth {liveEval.depth}: {liveEval.score}
                   </span>
                 )}
-                <a
-                  href={currentPuzzle.game_url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-amber-400 hover:text-amber-300 underline font-mono text-[11px] shrink-0"
-                >
-                  Chess.com ↗
-                </a>
+                {currentPuzzle.game_url && (
+                  <a
+                    href={currentPuzzle.game_url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-amber-400 hover:text-amber-300 underline font-mono text-[11px] shrink-0"
+                  >
+                    Source ↗
+                  </a>
+                )}
               </div>
             </div>
 
@@ -775,7 +881,9 @@ export const TrainingApp: React.FC = () => {
                     currentPuzzle.player_color === 'white' ? 'bg-white' : 'bg-black border border-white'
                   }`}
                 />
-                <span className="text-white font-semibold">ShohanTheRock</span>
+                <span className="text-white font-semibold">
+                  {currentSetId === 'world-champions' ? (currentPuzzle.id === 'classic-001' ? 'Paul Morphy' : currentPuzzle.id === 'classic-002' ? 'Edward Lasker' : currentPuzzle.id === 'classic-003' ? 'Adolf Anderssen' : currentPuzzle.id === 'classic-004' ? 'Frank Marshall' : currentPuzzle.id === 'classic-005' ? 'Bobby Fischer' : currentPuzzle.id === 'classic-006' ? 'Garry Kasparov' : 'Mikhail Botvinnik') : 'ShohanTheRock'}
+                </span>
                 <span className="text-amber-400 font-mono font-medium">
                   ({currentPuzzle.player_rating || 2280})
                 </span>
@@ -807,7 +915,7 @@ export const TrainingApp: React.FC = () => {
               <button
                 onClick={handleShowGameBlunder}
                 className="bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 text-xs font-semibold py-2.5 rounded-xl border border-rose-500/30 transition active:scale-95 flex items-center justify-center gap-1"
-                title="Show What You Played in Game (B)"
+                title="Show What Was Played in Game (B)"
               >
                 ⏪ Game Move
               </button>
@@ -977,7 +1085,7 @@ export const TrainingApp: React.FC = () => {
           {/* Quick Theme Filters */}
           <div className="bg-[#1e1c18] border border-[#2d2b25] rounded-2xl p-4 shadow-xl space-y-2.5">
             <h3 className="text-xs font-bold text-white uppercase tracking-wider">
-              Filter by Theme
+              Filter by Theme in Active Set
             </h3>
             <div className="flex flex-wrap gap-1.5 text-xs">
               {[
@@ -1009,20 +1117,43 @@ export const TrainingApp: React.FC = () => {
         </div>
       </main>
 
-      {/* Drawer: Browse All Puzzles */}
+      {/* Drawer: Browse All Puzzles in Current Set */}
       {isDrawerOpen && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex justify-end">
           <div className="w-full max-w-md bg-[#1e1c18] border-l border-[#2d2b25] h-full flex flex-col shadow-2xl p-5 space-y-4">
             <div className="flex items-center justify-between border-b border-[#2d2b25] pb-3">
-              <h2 className="text-base font-bold text-white flex items-center gap-2">
-                <span>📚</span> All Missed Puzzles ({filteredPuzzles.length})
-              </h2>
+              <div>
+                <h2 className="text-base font-bold text-white flex items-center gap-2">
+                  <span>{currentSet.icon}</span> {currentSet.title}
+                </h2>
+                <span className="text-[11px] text-[#888]">
+                  {filteredPuzzles.length} available puzzles
+                </span>
+              </div>
               <button
                 onClick={() => setIsDrawerOpen(false)}
                 className="w-8 h-8 rounded-lg bg-[#262420] hover:bg-[#322f2a] text-white flex items-center justify-center border border-[#38352e]"
               >
                 ✕
               </button>
+            </div>
+
+            {/* Quick Set Tabs inside Drawer */}
+            <div className="flex gap-1.5 overflow-x-auto pb-1 text-xs">
+              {allSets.map((s) => (
+                <button
+                  key={s.id}
+                  onClick={() => handleSelectSet(s.id)}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-semibold shrink-0 transition flex items-center gap-1 ${
+                    s.id === currentSetId
+                      ? 'bg-amber-500 text-black font-bold'
+                      : 'bg-[#161512] text-[#888] hover:text-white border border-[#2d2b25]'
+                  }`}
+                >
+                  <span>{s.icon}</span>
+                  <span>{s.title.split(':')[0]}</span>
+                </button>
+              ))}
             </div>
 
             <div className="space-y-2">
@@ -1108,8 +1239,8 @@ export const TrainingApp: React.FC = () => {
                   if (confirm('Reset solved puzzle progress and streak?')) {
                     setSolvedIds(new Set());
                     setStreak(0);
-                    localStorage.removeItem('shohan_training_solved');
-                    localStorage.removeItem('shohan_training_streak');
+                    localStorage.removeItem('thetrainer_solved_puzzles');
+                    localStorage.removeItem('thetrainer_streak');
                   }
                 }}
                 className="hover:text-rose-400 transition"

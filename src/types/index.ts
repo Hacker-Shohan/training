@@ -26,3 +26,12 @@ export interface ChessPuzzle {
   explanation: string;
   turn: 'White' | 'Black';
 }
+
+export interface PuzzleSet {
+  id: string;
+  title: string;
+  subtitle: string;
+  icon: string;
+  badge: string;
+  puzzles: ChessPuzzle[];
+}
