@@ -1,0 +1,19 @@
+@import 'chessground/assets/chessground.base.css';
+@import 'chessground/assets/chessground.brown.css';
+@import 'chessground/assets/chessground.cburnett.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+.cg-wrap {
+  width: 100% !important;
+  height: 100% !important;
+}
+
+body {
+  margin: 0;
+  background-color: #161512;
+  color: #bababa;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
