@@ -1,10 +1,11 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Chess } from 'chess.js';
 import { Key } from 'chessground/types';
 import { DrawShape } from 'chessground/draw';
 import { LichessBoard } from './LichessBoard';
 import { EvalBar } from './EvalBar';
 import { sounds } from '../utils/sound';
+import { browserEngine, EngineEvaluation } from '../utils/engine';
 import type { ChessPuzzle } from '../types';
 import defaultPuzzlesData from '../data/puzzles.json';
 
@@ -47,8 +48,10 @@ export const TrainingApp: React.FC = () => {
     }
   });
 
-  // Sound toggle
+  // Settings
   const [soundEnabled, setSoundEnabled] = useState<boolean>(sounds.enabled);
+  const [engineEnabled, setEngineEnabled] = useState<boolean>(true);
+  const [autoOnlyMove, setAutoOnlyMove] = useState<boolean>(true);
 
   // Filters
   const [themeFilter, setThemeFilter] = useState<string>('all');
@@ -83,8 +86,6 @@ export const TrainingApp: React.FC = () => {
 
   // Current Index in filtered list
   const [filteredIndex, setFilteredIndex] = useState<number>(0);
-
-  // Current Puzzle
   const currentPuzzle = filteredPuzzles[filteredIndex] || allPuzzles[0];
 
   // Board & Chess State
@@ -96,6 +97,14 @@ export const TrainingApp: React.FC = () => {
   const [shapes, setShapes] = useState<DrawShape[]>([]);
   const [viewOnly, setViewOnly] = useState<boolean>(false);
 
+  // Multi-move tracking
+  const [puzzlePly, setPuzzlePly] = useState<number>(0);
+  const [isCompleted, setIsCompleted] = useState<boolean>(false);
+  const isAutoPlayingRef = useRef<boolean>(false);
+
+  // Live browser engine evaluation
+  const [liveEval, setLiveEval] = useState<EngineEvaluation | null>(null);
+
   // Interaction feedback state
   const [feedback, setFeedback] = useState<{
     type: 'idle' | 'success' | 'solved' | 'blunder' | 'error' | 'hint';
@@ -105,13 +114,11 @@ export const TrainingApp: React.FC = () => {
     message: 'Find the winning move!',
   });
 
-  // Track continuation line progress
-  const [continuationStep, setContinuationStep] = useState<number>(0);
-
-  // Initialize or change puzzle
+  // Load / Reset Puzzle
   const loadPuzzle = useCallback(
     (puzzle: ChessPuzzle) => {
       if (!puzzle) return;
+      isAutoPlayingRef.current = false;
       try {
         const newChess = new Chess(puzzle.fen);
         setChess(newChess);
@@ -121,17 +128,25 @@ export const TrainingApp: React.FC = () => {
         setLastMove([]);
         setShapes([]);
         setViewOnly(false);
-        setContinuationStep(0);
+        setPuzzlePly(0);
+        setIsCompleted(false);
 
         setFeedback({
           type: 'idle',
           message: `${puzzle.turn} to move • Find the winning tactic!`,
         });
+
+        // Trigger browser engine evaluation if enabled
+        if (engineEnabled) {
+          browserEngine.evaluate(newChess.fen(), 12, (ev) => {
+            setLiveEval(ev);
+          });
+        }
       } catch (err) {
         console.error('Failed to load puzzle FEN:', puzzle.fen, err);
       }
     },
-    []
+    [engineEnabled]
   );
 
   useEffect(() => {
@@ -140,16 +155,50 @@ export const TrainingApp: React.FC = () => {
     }
   }, [currentPuzzle, loadPuzzle]);
 
+  // When board FEN changes, update live engine
+  useEffect(() => {
+    if (engineEnabled && boardFen) {
+      browserEngine.evaluate(boardFen, 12, (ev) => {
+        setLiveEval(ev);
+      });
+    }
+  }, [boardFen, engineEnabled]);
+
+  // Handle Mark Solved
+  const onPuzzleComplete = useCallback(() => {
+    sounds.playSuccess();
+    setIsCompleted(true);
+    setViewOnly(false);
+
+    setSolvedIds((prev) => {
+      const next = new Set(prev).add(currentPuzzle.id);
+      localStorage.setItem('shohan_training_solved', JSON.stringify([...next]));
+      return next;
+    });
+
+    setStreak((prev) => {
+      const next = prev + 1;
+      localStorage.setItem('shohan_training_streak', String(next));
+      return next;
+    });
+
+    setFeedback({
+      type: 'solved',
+      message: `🏆 Puzzle Solved! Clear conclusion reached. Advantage: ${currentPuzzle.eval_before}.`,
+    });
+  }, [currentPuzzle]);
+
   // Handle User Move on Board
   const handleMove = useCallback(
     (orig: Key, dest: Key) => {
-      if (viewOnly) return;
+      if (viewOnly || isAutoPlayingRef.current) return;
 
-      const expectedSan = currentPuzzle.best_move_san;
+      const continuation = currentPuzzle.continuation_san || [];
+      const expectedSan = continuation[puzzlePly] || currentPuzzle.best_move_san;
       const expectedUci = currentPuzzle.best_move_uci;
       const playedUci = orig + dest;
 
-      // Try making the move in chess.js
+      // Make move in chess.js
       const tempChess = new Chess(chess.fen());
       const move = tempChess.move({ from: orig, to: dest, promotion: 'q' });
 
@@ -158,17 +207,31 @@ export const TrainingApp: React.FC = () => {
         return;
       }
 
-      const isWinningMove =
-        move.san === expectedSan ||
-        playedUci === expectedUci.slice(0, 4) ||
-        (expectedUci.length >= 5 && playedUci === expectedUci.slice(0, 4));
+      // If already completed, allow free analysis on board!
+      if (isCompleted) {
+        if (move.captured) sounds.playCapture();
+        else sounds.playMove();
+        if (tempChess.isCheck()) setTimeout(() => sounds.playCheck(), 100);
 
+        setChess(tempChess);
+        setBoardFen(tempChess.fen());
+        setLastMove([orig, dest]);
+        setDests(toDests(tempChess));
+        return;
+      }
+
+      // Check if this move is the expected winning move
+      const isSanMatch = move.san === expectedSan;
+      const isUciMatch = puzzlePly === 0 && playedUci === expectedUci.slice(0, 4);
+
+      // Check if user played their actual game blunder (on ply 0)
       const isGameBlunder =
-        move.san === currentPuzzle.played_move_san ||
-        playedUci === currentPuzzle.played_move_uci.slice(0, 4);
+        puzzlePly === 0 &&
+        (move.san === currentPuzzle.played_move_san ||
+          playedUci === currentPuzzle.played_move_uci.slice(0, 4));
 
-      if (isWinningMove) {
-        // Correct Move!
+      if (isSanMatch || isUciMatch) {
+        // --- CORRECT MOVE ---
         if (move.captured) sounds.playCapture();
         else sounds.playMove();
 
@@ -176,6 +239,7 @@ export const TrainingApp: React.FC = () => {
           setTimeout(() => sounds.playCheck(), 100);
         }
 
+        const nextPly = puzzlePly + 1;
         setChess(tempChess);
         setBoardFen(tempChess.fen());
         setLastMove([orig, dest]);
@@ -187,23 +251,28 @@ export const TrainingApp: React.FC = () => {
             brush: 'green',
           },
         ]);
+        setPuzzlePly(nextPly);
 
-        // Check if there is an opponent response in continuation
-        const continuation = currentPuzzle.continuation_san || [];
-        const nextOpponentMoveSan = continuation[1]; // Opponent response
+        // Check if game is over (checkmate / stalemate)
+        if (tempChess.isGameOver()) {
+          onPuzzleComplete();
+          return;
+        }
 
-        if (nextOpponentMoveSan && !tempChess.isGameOver()) {
+        // Check if opponent has a reply in the continuation line
+        const oppReplySan = continuation[nextPly];
+        if (oppReplySan) {
+          // Opponent auto-moves!
           setViewOnly(true);
           setFeedback({
             type: 'success',
-            message: `🎉 Correct move (${move.san})! Stockfish is calculating opponent reply...`,
+            message: `🎉 Best move (${move.san})! Opponent auto-moving...`,
           });
 
-          // Play opponent response after brief natural delay
           setTimeout(() => {
             const oppChess = new Chess(tempChess.fen());
             try {
-              const oppMove = oppChess.move(nextOpponentMoveSan);
+              const oppMove = oppChess.move(oppReplySan);
               if (oppMove) {
                 if (oppMove.captured) sounds.playCapture();
                 else sounds.playMove();
@@ -212,35 +281,76 @@ export const TrainingApp: React.FC = () => {
                   setTimeout(() => sounds.playCheck(), 100);
                 }
 
+                const postOppPly = nextPly + 1;
                 setChess(oppChess);
                 setBoardFen(oppChess.fen());
                 setLastMove([oppMove.from as Key, oppMove.to as Key]);
                 setDests(toDests(oppChess));
-                setViewOnly(false);
+                setPuzzlePly(postOppPly);
 
-                // Check for follow-up move
-                const followUpSan = continuation[2];
-                if (followUpSan) {
-                  setFeedback({
-                    type: 'idle',
-                    message: `Opponent played ${oppMove.san}. Now find the follow-up blow!`,
-                  });
-                  setContinuationStep(2);
+                // Check if game is over
+                if (oppChess.isGameOver()) {
+                  onPuzzleComplete();
+                  return;
+                }
+
+                // Check if puzzle reaches clear conclusion
+                if (postOppPly >= continuation.length) {
+                  onPuzzleComplete();
                 } else {
-                  onPuzzleFullySolved();
+                  // User has follow-up move
+                  const nextUserSan = continuation[postOppPly];
+                  const legalMoves = oppChess.moves();
+
+                  // If autoOnlyMove is true and user only has 1 legal move, auto-play it!
+                  if (autoOnlyMove && legalMoves.length === 1 && legalMoves[0] === nextUserSan) {
+                    setFeedback({
+                      type: 'hint',
+                      message: `Opponent played ${oppMove.san}. Only move! Auto-playing...`,
+                    });
+                    setTimeout(() => {
+                      const autoChess = new Chess(oppChess.fen());
+                      const autoMove = autoChess.move(nextUserSan);
+                      if (autoMove) {
+                        if (autoMove.captured) sounds.playCapture();
+                        else sounds.playMove();
+                        setChess(autoChess);
+                        setBoardFen(autoChess.fen());
+                        setLastMove([autoMove.from as Key, autoMove.to as Key]);
+                        setDests(toDests(autoChess));
+                        setPuzzlePly(postOppPly + 1);
+                        if (postOppPly + 1 >= continuation.length || autoChess.isGameOver()) {
+                          onPuzzleComplete();
+                        } else {
+                          setViewOnly(false);
+                          setFeedback({
+                            type: 'idle',
+                            message: `Now find the next winning move!`,
+                          });
+                        }
+                      }
+                    }, 400);
+                  } else {
+                    setViewOnly(false);
+                    setFeedback({
+                      type: 'idle',
+                      message: `Opponent replied ${oppMove.san}. Find the follow-up blow!`,
+                    });
+                  }
                 }
               } else {
-                onPuzzleFullySolved();
+                onPuzzleComplete();
               }
             } catch {
-              onPuzzleFullySolved();
+              onPuzzleComplete();
             }
-          }, 450);
+          }, 400);
         } else {
-          onPuzzleFullySolved();
+          // Reached clear conclusion!
+          onPuzzleComplete();
         }
       } else if (isGameBlunder) {
-        // User played their actual game blunder
+        // --- PLAYED GAME BLUNDER ---
         sounds.playError();
         setShapes([
           {
@@ -251,7 +361,7 @@ export const TrainingApp: React.FC = () => {
         ]);
         setFeedback({
           type: 'blunder',
-          message: `⚠️ That's what you played in the game (${move.san})! Eval crashed from ${currentPuzzle.eval_before} to ${currentPuzzle.eval_after_played}. Find the knockout shot!`,
+          message: `⚠️ In the game you played ${move.san}! Eval dropped from ${currentPuzzle.eval_before} to ${currentPuzzle.eval_after_played}. Find the tactical solution!`,
         });
 
         // Snap back
@@ -260,7 +370,7 @@ export const TrainingApp: React.FC = () => {
           setDests(toDests(chess));
         }, 300);
       } else {
-        // Incorrect Move
+        // --- INCORRECT MOVE ---
         sounds.playError();
         setStreak(0);
         localStorage.setItem('shohan_training_streak', '0');
@@ -285,78 +395,91 @@ export const TrainingApp: React.FC = () => {
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [chess, currentPuzzle, viewOnly]
+    [chess, currentPuzzle, puzzlePly, viewOnly, isCompleted, autoOnlyMove, onPuzzleComplete]
   );
 
-  const onPuzzleFullySolved = useCallback(() => {
-    sounds.playSuccess();
+  // Auto-play the full solution sequence till the end
+  const handleAutoPlaySolution = useCallback(() => {
+    if (isAutoPlayingRef.current) return;
+    isAutoPlayingRef.current = true;
     setViewOnly(true);
 
-    setSolvedIds((prev) => {
-      const next = new Set(prev).add(currentPuzzle.id);
-      localStorage.setItem('shohan_training_solved', JSON.stringify([...next]));
-      return next;
-    });
+    const continuation = currentPuzzle.continuation_san || [];
+    let currentC = new Chess(currentPuzzle.fen);
+    let step = 0;
 
-    setStreak((prev) => {
-      const next = prev + 1;
-      localStorage.setItem('shohan_training_streak', String(next));
-      return next;
-    });
+    const playNextStep = () => {
+      if (!isAutoPlayingRef.current || step >= continuation.length) {
+        isAutoPlayingRef.current = false;
+        onPuzzleComplete();
+        return;
+      }
 
-    setFeedback({
-      type: 'solved',
-      message: `🏆 Puzzle Solved! Stockfish advantage: ${currentPuzzle.eval_before}. Great tactical eye!`,
-    });
-  }, [currentPuzzle]);
+      const san = continuation[step];
+      try {
+        const m = currentC.move(san);
+        if (m) {
+          if (m.captured) sounds.playCapture();
+          else sounds.playMove();
+          if (currentC.isCheck()) setTimeout(() => sounds.playCheck(), 100);
+
+          setChess(new Chess(currentC.fen()));
+          setBoardFen(currentC.fen());
+          setLastMove([m.from as Key, m.to as Key]);
+          setShapes([
+            {
+              orig: m.from as Key,
+              dest: m.to as Key,
+              brush: step % 2 === 0 ? 'green' : 'blue',
+            },
+          ]);
+          setPuzzlePly(step + 1);
+
+          step++;
+          if (step < continuation.length && !currentC.isGameOver()) {
+            setTimeout(playNextStep, 500);
+          } else {
+            isAutoPlayingRef.current = false;
+            onPuzzleComplete();
+          }
+        }
+      } catch {
+        isAutoPlayingRef.current = false;
+        onPuzzleComplete();
+      }
+    };
+
+    playNextStep();
+  }, [currentPuzzle, onPuzzleComplete]);
 
   // Hint button
   const handleHint = useCallback(() => {
     if (!currentPuzzle) return;
-    const fromSq = currentPuzzle.best_move_uci.slice(0, 2) as Key;
-    setShapes([
-      {
-        orig: fromSq,
-        brush: 'yellow',
-      },
-    ]);
-    setFeedback({
-      type: 'hint',
-      message: `💡 Hint: Focus on piece on ${fromSq.toUpperCase()}! Theme: ${currentPuzzle.primary_theme}.`,
-    });
-  }, [currentPuzzle]);
+    const continuation = currentPuzzle.continuation_san || [];
+    const targetSan = continuation[puzzlePly] || currentPuzzle.best_move_san;
 
-  // Reveal Solution
-  const handleRevealSolution = useCallback(() => {
-    if (!currentPuzzle) return;
-    const fromSq = currentPuzzle.best_move_uci.slice(0, 2) as Key;
-    const toSq = currentPuzzle.best_move_uci.slice(2, 4) as Key;
+    // Find move in current position
+    const moves = chess.moves({ verbose: true });
+    const targetMove = moves.find((m) => m.san === targetSan);
 
-    setShapes([
-      {
-        orig: fromSq,
-        dest: toSq,
-        brush: 'green',
-      },
-    ]);
-
-    try {
-      const temp = new Chess(currentPuzzle.fen);
-      const m = temp.move({ from: fromSq, to: toSq, promotion: 'q' });
-      if (m) {
-        sounds.playMove();
-        setChess(temp);
-        setBoardFen(temp.fen());
-        setLastMove([fromSq, toSq]);
-        setViewOnly(true);
-      }
-    } catch {}
-
-    setFeedback({
-      type: 'solved',
-      message: `👁️ Solution: ${currentPuzzle.best_move_san}! Continuation: ${currentPuzzle.continuation_str}`,
-    });
-  }, [currentPuzzle]);
+    if (targetMove) {
+      setShapes([
+        {
+          orig: targetMove.from as Key,
+          brush: 'yellow',
+        },
+      ]);
+      setFeedback({
+        type: 'hint',
+        message: `💡 Hint: Focus on piece on ${targetMove.from.toUpperCase()}! Theme: ${currentPuzzle.primary_theme}.`,
+      });
+    } else {
+      setFeedback({
+        type: 'hint',
+        message: `💡 Theme: ${currentPuzzle.primary_theme}. Solution involves ${currentPuzzle.best_move_san}.`,
+      });
+    }
+  }, [chess, currentPuzzle, puzzlePly]);
 
   // Show Game Move
   const handleShowGameBlunder = useCallback(() => {
@@ -406,6 +529,19 @@ export const TrainingApp: React.FC = () => {
     setSoundEnabled(next);
   }, []);
 
+  const handleEngineToggle = useCallback(() => {
+    setEngineEnabled((prev) => {
+      const next = !prev;
+      if (!next) {
+        browserEngine.stop();
+        setLiveEval(null);
+      } else {
+        browserEngine.evaluate(boardFen, 12, (ev) => setLiveEval(ev));
+      }
+      return next;
+    });
+  }, [boardFen]);
+
   // Keyboard navigation
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -422,7 +558,7 @@ export const TrainingApp: React.FC = () => {
       } else if (e.key.toLowerCase() === 'h') {
         handleHint();
       } else if (e.key.toLowerCase() === 's') {
-        handleRevealSolution();
+        handleAutoPlaySolution();
       } else if (e.key.toLowerCase() === 'b') {
         handleShowGameBlunder();
       } else if (e.key.toLowerCase() === 'f') {
@@ -434,7 +570,7 @@ export const TrainingApp: React.FC = () => {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [handleNext, handlePrev, handleHint, handleRevealSolution, handleShowGameBlunder, handleFlip, handleSoundToggle]);
+  }, [handleNext, handlePrev, handleHint, handleAutoPlaySolution, handleShowGameBlunder, handleFlip, handleSoundToggle]);
 
   // Import custom puzzles JSON
   const handleImportFile = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -459,10 +595,26 @@ export const TrainingApp: React.FC = () => {
   };
 
   const isCurrentSolved = solvedIds.has(currentPuzzle?.id || '');
+  const continuation = currentPuzzle?.continuation_san || [];
+
+  // Live arrow from browser engine if enabled and puzzle solved/analyzing
+  const combinedShapes = useMemo(() => {
+    const list = [...shapes];
+    if (engineEnabled && liveEval && liveEval.bestMove && isCompleted) {
+      const orig = liveEval.bestMove.slice(0, 2) as Key;
+      const dest = liveEval.bestMove.slice(2, 4) as Key;
+      list.push({
+        orig,
+        dest,
+        brush: 'blue',
+      });
+    }
+    return list;
+  }, [shapes, engineEnabled, liveEval, isCompleted]);
 
   return (
     <div className="min-h-screen bg-[#161512] text-[#bababa] font-sans antialiased flex flex-col selection:bg-amber-500 selection:text-black">
-      {/* Top Lichess-style Navbar */}
+      {/* Top Navbar */}
       <header className="h-14 bg-[#1e1c18] border-b border-[#2d2b25] px-4 md:px-6 flex items-center justify-between shadow-md z-30">
         <div className="flex items-center gap-3">
           <div className="w-9 h-9 rounded-lg bg-gradient-to-tr from-amber-600 to-amber-500 flex items-center justify-center text-xl text-black shadow-md font-bold">
@@ -472,7 +624,7 @@ export const TrainingApp: React.FC = () => {
             <h1 className="text-base md:text-lg font-bold text-white tracking-wide flex items-center gap-2">
               <span>ShohanTraining</span>
               <span className="text-[10px] bg-amber-500/20 text-amber-400 border border-amber-500/30 px-1.5 py-0.5 rounded font-mono font-semibold">
-                Stockfish 17
+                Stockfish Browser Engine
               </span>
             </h1>
           </div>
@@ -480,6 +632,20 @@ export const TrainingApp: React.FC = () => {
 
         {/* Stats & Quick Actions */}
         <div className="flex items-center gap-2 md:gap-3 text-xs">
+          {/* Live Engine Toggle */}
+          <button
+            onClick={handleEngineToggle}
+            className={`px-2.5 py-1 rounded-lg border font-mono text-[11px] flex items-center gap-1.5 transition ${
+              engineEnabled
+                ? 'bg-emerald-950/80 border-emerald-500/50 text-emerald-300'
+                : 'bg-[#161512] border-[#2d2b25] text-[#7e7b73]'
+            }`}
+            title="Toggle Live In-Browser Stockfish Engine"
+          >
+            <span className={`w-2 h-2 rounded-full ${engineEnabled ? 'bg-emerald-400 animate-pulse' : 'bg-gray-500'}`} />
+            <span>Engine: {engineEnabled ? 'ON' : 'OFF'}</span>
+          </button>
+
           <div className="hidden sm:flex items-center gap-2 bg-[#161512] border border-[#2d2b25] px-2.5 py-1 rounded-lg">
             <span className="text-emerald-400 font-bold">{solvedIds.size}</span>
             <span className="text-[#7e7b73]">/ {allPuzzles.length} Solved</span>
@@ -535,21 +701,28 @@ export const TrainingApp: React.FC = () => {
                 <span className="text-[#888] font-mono">({currentPuzzle.opponent_rating})</span>
               </div>
 
-              <a
-                href={currentPuzzle.game_url}
-                target="_blank"
-                rel="noreferrer"
-                className="text-amber-400 hover:text-amber-300 underline font-mono text-[11px] shrink-0"
-              >
-                Chess.com ↗
-              </a>
+              <div className="flex items-center gap-2">
+                {engineEnabled && liveEval && (
+                  <span className="font-mono text-[11px] text-emerald-400 bg-emerald-950/60 border border-emerald-500/30 px-1.5 py-0.5 rounded">
+                    Depth {liveEval.depth}: {liveEval.score}
+                  </span>
+                )}
+                <a
+                  href={currentPuzzle.game_url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-amber-400 hover:text-amber-300 underline font-mono text-[11px] shrink-0"
+                >
+                  Chess.com ↗
+                </a>
+              </div>
             </div>
 
             {/* Board Container with Eval Bar */}
             <div className="flex gap-2.5 items-stretch justify-center">
-              {/* Lichess Vertical Eval Bar */}
+              {/* Lichess Vertical Eval Bar (live engine eval or precomputed) */}
               <EvalBar
-                scoreText={currentPuzzle.eval_before}
+                scoreText={engineEnabled && liveEval ? liveEval.score : currentPuzzle.eval_before}
                 orientation={orientation}
                 className="shrink-0"
               />
@@ -562,7 +735,7 @@ export const TrainingApp: React.FC = () => {
                   turnColor={currentPuzzle.player_color}
                   dests={dests}
                   lastMove={lastMove}
-                  shapes={shapes}
+                  shapes={combinedShapes}
                   viewOnly={viewOnly}
                   onMove={handleMove}
                 />
@@ -580,9 +753,21 @@ export const TrainingApp: React.FC = () => {
                 <span className="text-white font-semibold">ShohanTheRock</span>
                 <span className="text-amber-400 font-mono font-medium">({currentPuzzle.player_rating || 2280})</span>
               </div>
-              <span className="text-[#7e7b73] font-mono text-[11px]">
-                Move {currentPuzzle.move_number}
-              </span>
+              
+              <div className="flex items-center gap-3">
+                <label className="flex items-center gap-1.5 cursor-pointer text-[11px] text-[#888] select-none">
+                  <input
+                    type="checkbox"
+                    checked={autoOnlyMove}
+                    onChange={(e) => setAutoOnlyMove(e.target.checked)}
+                    className="rounded accent-amber-500"
+                  />
+                  <span>Auto Only-Move</span>
+                </label>
+                <span className="text-[#7e7b73] font-mono text-[11px]">
+                  Move {currentPuzzle.move_number}
+                </span>
+              </div>
             </div>
 
             {/* Feedback & Interaction Status Banner */}
@@ -605,7 +790,7 @@ export const TrainingApp: React.FC = () => {
               </span>
             </div>
 
-            {/* Tactical Controls (Next, Hint, Blunder, Solution) */}
+            {/* Tactical Controls */}
             <div className="grid grid-cols-4 gap-2 pt-1">
               <button
                 onClick={handlePrev}
@@ -645,11 +830,19 @@ export const TrainingApp: React.FC = () => {
             {/* Secondary actions */}
             <div className="flex items-center justify-between text-xs px-1 text-[#7e7b73]">
               <button
-                onClick={handleRevealSolution}
-                className="hover:text-amber-400 underline transition"
-                title="Reveal Stockfish Solution (S)"
+                onClick={handleAutoPlaySolution}
+                className="hover:text-amber-400 underline transition flex items-center gap-1"
+                title="Auto-play full solution sequence till conclusion (S)"
               >
-                Reveal Engine Solution
+                <span>▶ Auto-Play Solution</span>
+              </button>
+
+              <button
+                onClick={() => loadPuzzle(currentPuzzle)}
+                className="hover:text-white transition"
+                title="Restart this position"
+              >
+                🔄 Reset Position
               </button>
 
               <button
@@ -663,9 +856,8 @@ export const TrainingApp: React.FC = () => {
           </div>
         </div>
 
-        {/* Right Side: Tactical Breakdown & Coaching */}
+        {/* Right Side: Tactical Breakdown & Continuation Line */}
         <div className="lg:col-span-5 space-y-4">
-          {/* Card: Current Puzzle Overview */}
           <div className="bg-[#1e1c18] border border-[#2d2b25] rounded-2xl p-5 shadow-xl space-y-4">
             <div className="flex items-center justify-between border-b border-[#2d2b25] pb-3">
               <div className="flex items-center gap-2">
@@ -683,6 +875,35 @@ export const TrainingApp: React.FC = () => {
                 <span className="font-mono text-xs text-amber-400 bg-amber-400/10 px-2 py-0.5 rounded border border-amber-400/20">
                   #{filteredIndex + 1} of {filteredPuzzles.length}
                 </span>
+              </div>
+            </div>
+
+            {/* Continuation Line Stepper */}
+            <div className="bg-[#141310] border border-[#2d2b25] rounded-xl p-3 space-y-2">
+              <div className="text-[11px] text-[#7e7b73] uppercase font-semibold tracking-wider flex justify-between">
+                <span>Tactical Line:</span>
+                <span className="font-mono text-amber-400">Step {puzzlePly} / {continuation.length}</span>
+              </div>
+              <div className="flex flex-wrap gap-1.5 font-mono text-xs">
+                {continuation.map((m, idx) => {
+                  const isCurrent = idx === puzzlePly;
+                  const isDone = idx < puzzlePly;
+                  const isUserPly = idx % 2 === 0;
+                  return (
+                    <span
+                      key={idx}
+                      className={`px-2 py-0.5 rounded ${
+                        isCurrent
+                          ? 'bg-amber-500 text-black font-bold animate-pulse'
+                          : isDone
+                          ? 'bg-emerald-950/70 text-emerald-300 border border-emerald-500/30 font-medium'
+                          : 'bg-[#1e1c18] text-[#666] border border-[#2d2b25]'
+                      }`}
+                    >
+                      {idx + 1}. {m} {isUserPly ? '👤' : '🤖'}
+                    </span>
+                  );
+                })}
               </div>
             </div>
 
@@ -717,7 +938,7 @@ export const TrainingApp: React.FC = () => {
               <div className="flex justify-between items-center bg-[#161512] px-3 py-2 rounded-xl border border-[#2d2b25]">
                 <span className="text-emerald-400 font-medium">Stockfish Solution:</span>
                 <span className="font-mono font-bold text-emerald-400">
-                  {isCurrentSolved || viewOnly ? currentPuzzle.best_move_san : '??? (Hidden)'}
+                  {isCurrentSolved || isCompleted ? currentPuzzle.best_move_san : '??? (Hidden)'}
                 </span>
               </div>
             </div>
@@ -728,13 +949,6 @@ export const TrainingApp: React.FC = () => {
                 <span>🧠</span> Coach's Strategy:
               </div>
               <p className="text-slate-300">{currentPuzzle.explanation}</p>
-
-              {(isCurrentSolved || viewOnly) && (
-                <div className="pt-2 border-t border-[#2d2b25] font-mono text-[11px] text-emerald-400">
-                  <span className="text-[#7e7b73] block mb-0.5 font-sans">Engine Line:</span>
-                  {currentPuzzle.continuation_str}
-                </div>
-              )}
             </div>
 
             {/* Keyboard Shortcuts Bar */}
@@ -743,7 +957,7 @@ export const TrainingApp: React.FC = () => {
               <div className="flex gap-2 font-mono">
                 <span>[Space] Next</span>
                 <span>[H] Hint</span>
-                <span>[S] Solution</span>
+                <span>[S] Auto-Play</span>
                 <span>[F] Flip</span>
               </div>
             </div>
