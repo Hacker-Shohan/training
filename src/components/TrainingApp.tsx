@@ -3,7 +3,6 @@ import { Chess } from 'chess.js';
 import { Key } from 'chessground/types';
 import { DrawShape } from 'chessground/draw';
 import { LichessBoard } from './LichessBoard';
-import { EvalBar } from './EvalBar';
 import { sounds } from '../utils/sound';
 import { browserEngine, EngineEvaluation } from '../utils/engine';
 import type { ChessPuzzle, PuzzleSet } from '../types';
@@ -351,13 +350,13 @@ export const TrainingApp: React.FC = () => {
       return next;
     });
 
-    const isMate = currentPuzzle.eval_before.includes('M') || currentPuzzle.primary_theme.includes('Mate');
+    const isMate = currentPuzzle.continuation_str.endsWith('#') || currentPuzzle.primary_theme.includes('Mate');
     setStatusText({
       type: 'solved',
       title: isMate ? 'Checkmate Delivered!' : 'Puzzle Solved!',
       subtitle: isMate
         ? 'Victory! Forced mating sequence completed to checkmate.'
-        : `Victory! Decisive advantage achieved (${currentPuzzle.eval_before}).`,
+        : 'Victory! Decisive tactical advantage achieved.',
     });
   }, [currentPuzzle]);
 
@@ -520,8 +519,8 @@ export const TrainingApp: React.FC = () => {
         ]);
         setStatusText({
           type: 'blunder',
-          title: `Game Blunder (${move.san})!`,
-          subtitle: `That's what was played in the game! Eval crashed from ${currentPuzzle.eval_before} to ${currentPuzzle.eval_after_played}.`,
+          title: `Game Move (${move.san})!`,
+          subtitle: `That's what was played in the game! Try to find the winning tactical continuation.`,
         });
 
         setTimeout(() => {
@@ -650,8 +649,8 @@ export const TrainingApp: React.FC = () => {
 
     setStatusText({
       type: 'blunder',
-      title: `Game Blunder (${currentPuzzle.played_move_san})`,
-      subtitle: `Eval dropped from ${currentPuzzle.eval_before} to ${currentPuzzle.eval_after_played} (-${(currentPuzzle.eval_drop_cp / 100).toFixed(1)} pawns).`,
+      title: `Game Move (${currentPuzzle.played_move_san})`,
+      subtitle: `This is the move played in the game. Find the master continuation!`,
     });
   }, [currentPuzzle]);
 
@@ -845,13 +844,7 @@ export const TrainingApp: React.FC = () => {
                 </span>
               </div>
 
-              {/* Clean evaluation badge - NO depth clutter */}
               <div className="flex items-center gap-1.5">
-                {engineEnabled && liveEval && (
-                  <span className="font-mono text-[11px] font-bold text-emerald-400 bg-emerald-950/60 border border-emerald-500/30 px-2 py-0.5 rounded">
-                    {liveEval.score}
-                  </span>
-                )}
                 {currentPuzzle.game_url && (
                   <a
                     href={currentPuzzle.game_url}
@@ -865,15 +858,9 @@ export const TrainingApp: React.FC = () => {
               </div>
             </div>
 
-            {/* Board Container with Mobile-scaled Eval Bar */}
-            <div className="flex gap-1.5 sm:gap-2.5 items-stretch justify-center w-full">
-              <EvalBar
-                scoreText={engineEnabled && liveEval ? liveEval.score : currentPuzzle.eval_before}
-                orientation={orientation}
-                className="shrink-0"
-              />
-
-              <div className="flex-1 w-full max-w-[460px]">
+            {/* Board Container */}
+            <div className="w-full max-w-[490px] mx-auto">
+              <div className="w-full">
                 <LichessBoard
                   fen={boardFen}
                   orientation={orientation}
@@ -1079,7 +1066,7 @@ export const TrainingApp: React.FC = () => {
                 <div className="font-semibold text-emerald-400 flex items-center justify-between">
                   <span>🧠 Post-Game Analysis</span>
                   <span className="font-mono text-[10px] text-[#888]">
-                    In game: {currentPuzzle.played_move_san} (-{(currentPuzzle.eval_drop_cp / 100).toFixed(1)})
+                    In game: {currentPuzzle.played_move_san}
                   </span>
                 </div>
                 <p className="text-slate-300 leading-relaxed text-[11px] sm:text-xs">{currentPuzzle.explanation}</p>
@@ -1338,10 +1325,10 @@ export const TrainingApp: React.FC = () => {
                     </div>
 
                     <div className="text-right shrink-0 font-mono text-[11px]">
-                      <span className="text-rose-400 font-semibold block">
-                        -{(p.eval_drop_cp / 100).toFixed(1)}
+                      <span className="text-amber-400 font-semibold block">
+                        {p.turn}
                       </span>
-                      <span className="text-[#666] text-[10px]">{p.turn}</span>
+                      <span className="text-[#666] text-[10px]">to move</span>
                     </div>
                   </div>
                 );
