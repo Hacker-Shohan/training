@@ -900,7 +900,7 @@ export const TrainingApp: React.FC = () => {
                           : 'bg-[#1e1c18] text-[#666] border border-[#2d2b25]'
                       }`}
                     >
-                      {idx + 1}. {m} {isUserPly ? '👤' : '🤖'}
+                      {idx + 1}. {isDone || isCompleted || isCurrentSolved ? m : '???'} {isUserPly ? '👤' : '🤖'}
                     </span>
                   );
                 })}
@@ -943,12 +943,37 @@ export const TrainingApp: React.FC = () => {
               </div>
             </div>
 
-            {/* Coach's Analysis & Explanation */}
-            <div className="bg-[#161512] border border-[#2d2b25] rounded-xl p-3.5 space-y-2 text-xs leading-relaxed">
-              <div className="font-semibold text-amber-300 flex items-center gap-1.5">
-                <span>🧠</span> Coach's Strategy:
+            {/* Coach's Analysis & Explanation - Hidden Until Solved! */}
+            <div className="bg-[#1e1c18] border border-[#2d2b25] rounded-xl p-3.5 space-y-2 text-xs leading-relaxed">
+              <div className="font-semibold text-amber-300 flex items-center justify-between">
+                <span className="flex items-center gap-1.5">
+                  <span>🧠</span> {isCurrentSolved || isCompleted ? "Coach's Post-Game Analysis:" : "Tactical Objective:"}
+                </span>
+                {!(isCurrentSolved || isCompleted) && (
+                  <span className="text-[10px] text-[#7e7b73] font-mono italic">
+                    Solution locked
+                  </span>
+                )}
               </div>
-              <p className="text-slate-300">{currentPuzzle.explanation}</p>
+
+              {isCurrentSolved || isCompleted ? (
+                <div className="space-y-1.5">
+                  <p className="text-slate-300 leading-relaxed">{currentPuzzle.explanation}</p>
+                  <div className="pt-2 border-t border-[#2d2b25] font-mono text-[11px] text-emerald-400">
+                    <span className="text-[#7e7b73] block mb-0.5 font-sans">Full Engine Line:</span>
+                    {currentPuzzle.continuation_str}
+                  </div>
+                </div>
+              ) : (
+                <div className="text-[#888] py-2.5 px-3 bg-[#12110e] rounded-lg border border-dashed border-[#2d2b25] space-y-1">
+                  <p className="text-slate-300">
+                    You have a winning tactical shot here! Calculate forcing candidate moves to exploit your opponent's weaknesses.
+                  </p>
+                  <p className="text-[11px] text-[#6b675e] italic">
+                    🔒 The exact moves and strategic coaching breakdown will reveal once you solve the puzzle or click Solution.
+                  </p>
+                </div>
+              )}
             </div>
 
             {/* Keyboard Shortcuts Bar */}
