@@ -23,6 +23,10 @@ function toDests(chess: Chess): Map<Key, Key[]> {
 }
 
 export const TrainingApp: React.FC = () => {
+  // Engine loading screen state
+  const [engineLoading, setEngineLoading] = useState<boolean>(true);
+  const [engineProgress, setEngineProgress] = useState<number>(15);
+
   // Puzzles dataset
   const [allPuzzles, setAllPuzzles] = useState<ChessPuzzle[]>(
     (defaultPuzzlesData as { puzzles: ChessPuzzle[] }).puzzles || []
@@ -51,7 +55,6 @@ export const TrainingApp: React.FC = () => {
   // Settings
   const [soundEnabled, setSoundEnabled] = useState<boolean>(sounds.enabled);
   const [engineEnabled, setEngineEnabled] = useState<boolean>(true);
-  const [autoOnlyMove, setAutoOnlyMove] = useState<boolean>(true);
 
   // Filters
   const [themeFilter, setThemeFilter] = useState<string>('all');
@@ -97,22 +100,40 @@ export const TrainingApp: React.FC = () => {
   const [shapes, setShapes] = useState<DrawShape[]>([]);
   const [viewOnly, setViewOnly] = useState<boolean>(false);
 
-  // Multi-move tracking
-  const [puzzlePly, setPuzzlePly] = useState<number>(0);
+  // Move tracking (Lichess style - only records moves as they are played)
+  const [playedMoves, setPlayedMoves] = useState<string[]>([]);
   const [isCompleted, setIsCompleted] = useState<boolean>(false);
   const isAutoPlayingRef = useRef<boolean>(false);
 
   // Live browser engine evaluation
   const [liveEval, setLiveEval] = useState<EngineEvaluation | null>(null);
 
-  // Interaction feedback state
-  const [feedback, setFeedback] = useState<{
-    type: 'idle' | 'success' | 'solved' | 'blunder' | 'error' | 'hint';
-    message: string;
+  // Lichess Status state
+  const [statusText, setStatusText] = useState<{
+    type: 'turn' | 'success' | 'solved' | 'blunder' | 'error' | 'hint';
+    title: string;
+    subtitle?: string;
   }>({
-    type: 'idle',
-    message: 'Find the winning move!',
+    type: 'turn',
+    title: 'Your turn',
+    subtitle: 'Find the best move!',
   });
+
+  // Simulated Engine Download & Init Screen
+  useEffect(() => {
+    const timer1 = setTimeout(() => setEngineProgress(45), 250);
+    const timer2 = setTimeout(() => setEngineProgress(85), 600);
+    const timer3 = setTimeout(() => {
+      setEngineProgress(100);
+      setTimeout(() => setEngineLoading(false), 300);
+    }, 900);
+
+    return () => {
+      clearTimeout(timer1);
+      clearTimeout(timer2);
+      clearTimeout(timer3);
+    };
+  }, []);
 
   // Load / Reset Puzzle
   const loadPuzzle = useCallback(
@@ -128,12 +149,13 @@ export const TrainingApp: React.FC = () => {
         setLastMove([]);
         setShapes([]);
         setViewOnly(false);
-        setPuzzlePly(0);
+        setPlayedMoves([]);
         setIsCompleted(false);
 
-        setFeedback({
-          type: 'idle',
-          message: `${puzzle.turn} to move • Find the winning tactic!`,
+        setStatusText({
+          type: 'turn',
+          title: 'Your turn',
+          subtitle: `Find the best move for ${puzzle.turn}!`,
         });
 
         // Trigger browser engine evaluation if enabled
@@ -168,7 +190,7 @@ export const TrainingApp: React.FC = () => {
   const onPuzzleComplete = useCallback(() => {
     sounds.playSuccess();
     setIsCompleted(true);
-    setViewOnly(false);
+    setViewOnly(false); // allow free analysis after completion
 
     setSolvedIds((prev) => {
       const next = new Set(prev).add(currentPuzzle.id);
@@ -182,9 +204,10 @@ export const TrainingApp: React.FC = () => {
       return next;
     });
 
-    setFeedback({
+    setStatusText({
       type: 'solved',
-      message: `🏆 Puzzle Solved! Clear conclusion reached. Advantage: ${currentPuzzle.eval_before}.`,
+      title: 'Puzzle Solved!',
+      subtitle: `Victory! Decisive advantage achieved (${currentPuzzle.eval_before}).`,
     });
   }, [currentPuzzle]);
 
@@ -194,7 +217,8 @@ export const TrainingApp: React.FC = () => {
       if (viewOnly || isAutoPlayingRef.current) return;
 
       const continuation = currentPuzzle.continuation_san || [];
-      const expectedSan = continuation[puzzlePly] || currentPuzzle.best_move_san;
+      const currentPly = playedMoves.length;
+      const expectedSan = continuation[currentPly] || currentPuzzle.best_move_san;
       const expectedUci = currentPuzzle.best_move_uci;
       const playedUci = orig + dest;
 
@@ -207,7 +231,7 @@ export const TrainingApp: React.FC = () => {
         return;
       }
 
-      // If already completed, allow free analysis on board!
+      // If already solved, allow free exploratory moves on board
       if (isCompleted) {
         if (move.captured) sounds.playCapture();
         else sounds.playMove();
@@ -217,16 +241,17 @@ export const TrainingApp: React.FC = () => {
         setBoardFen(tempChess.fen());
         setLastMove([orig, dest]);
         setDests(toDests(tempChess));
+        setPlayedMoves((prev) => [...prev, move.san]);
         return;
       }
 
-      // Check if this move is the expected winning move
+      // Check if move matches expected tactical continuation
       const isSanMatch = move.san === expectedSan;
-      const isUciMatch = puzzlePly === 0 && playedUci === expectedUci.slice(0, 4);
+      const isUciMatch = currentPly === 0 && playedUci === expectedUci.slice(0, 4);
 
-      // Check if user played their actual game blunder (on ply 0)
+      // Check if user played their actual game blunder
       const isGameBlunder =
-        puzzlePly === 0 &&
+        currentPly === 0 &&
         (move.san === currentPuzzle.played_move_san ||
           playedUci === currentPuzzle.played_move_uci.slice(0, 4));
 
@@ -239,7 +264,8 @@ export const TrainingApp: React.FC = () => {
           setTimeout(() => sounds.playCheck(), 100);
         }
 
-        const nextPly = puzzlePly + 1;
+        const nextMoves = [...playedMoves, move.san];
+        setPlayedMoves(nextMoves);
         setChess(tempChess);
         setBoardFen(tempChess.fen());
         setLastMove([orig, dest]);
@@ -251,7 +277,6 @@ export const TrainingApp: React.FC = () => {
             brush: 'green',
           },
         ]);
-        setPuzzlePly(nextPly);
 
         // Check if game is over (checkmate / stalemate)
         if (tempChess.isGameOver()) {
@@ -259,14 +284,15 @@ export const TrainingApp: React.FC = () => {
           return;
         }
 
-        // Check if opponent has a reply in the continuation line
-        const oppReplySan = continuation[nextPly];
+        // Check if opponent has a reply in the continuation
+        const oppReplySan = continuation[nextMoves.length];
         if (oppReplySan) {
-          // Opponent auto-moves!
+          // Opponent auto-moves with engine!
           setViewOnly(true);
-          setFeedback({
+          setStatusText({
             type: 'success',
-            message: `🎉 Best move (${move.san})! Opponent auto-moving...`,
+            title: 'Best move!',
+            subtitle: 'Opponent replying...',
           });
 
           setTimeout(() => {
@@ -281,12 +307,12 @@ export const TrainingApp: React.FC = () => {
                   setTimeout(() => sounds.playCheck(), 100);
                 }
 
-                const postOppPly = nextPly + 1;
+                const postOppMoves = [...nextMoves, oppMove.san];
+                setPlayedMoves(postOppMoves);
                 setChess(oppChess);
                 setBoardFen(oppChess.fen());
                 setLastMove([oppMove.from as Key, oppMove.to as Key]);
                 setDests(toDests(oppChess));
-                setPuzzlePly(postOppPly);
 
                 // Check if game is over
                 if (oppChess.isGameOver()) {
@@ -294,49 +320,17 @@ export const TrainingApp: React.FC = () => {
                   return;
                 }
 
-                // Check if puzzle reaches clear conclusion
-                if (postOppPly >= continuation.length) {
+                // Check if reached clear conclusion
+                if (postOppMoves.length >= continuation.length) {
                   onPuzzleComplete();
                 } else {
-                  // User has follow-up move
-                  const nextUserSan = continuation[postOppPly];
-                  const legalMoves = oppChess.moves();
-
-                  // If autoOnlyMove is true and user only has 1 legal move, auto-play it!
-                  if (autoOnlyMove && legalMoves.length === 1 && legalMoves[0] === nextUserSan) {
-                    setFeedback({
-                      type: 'hint',
-                      message: `Opponent played ${oppMove.san}. Only move! Auto-playing...`,
-                    });
-                    setTimeout(() => {
-                      const autoChess = new Chess(oppChess.fen());
-                      const autoMove = autoChess.move(nextUserSan);
-                      if (autoMove) {
-                        if (autoMove.captured) sounds.playCapture();
-                        else sounds.playMove();
-                        setChess(autoChess);
-                        setBoardFen(autoChess.fen());
-                        setLastMove([autoMove.from as Key, autoMove.to as Key]);
-                        setDests(toDests(autoChess));
-                        setPuzzlePly(postOppPly + 1);
-                        if (postOppPly + 1 >= continuation.length || autoChess.isGameOver()) {
-                          onPuzzleComplete();
-                        } else {
-                          setViewOnly(false);
-                          setFeedback({
-                            type: 'idle',
-                            message: `Now find the next winning move!`,
-                          });
-                        }
-                      }
-                    }, 400);
-                  } else {
-                    setViewOnly(false);
-                    setFeedback({
-                      type: 'idle',
-                      message: `Opponent replied ${oppMove.san}. Find the follow-up blow!`,
-                    });
-                  }
+                  // User has follow-up
+                  setViewOnly(false);
+                  setStatusText({
+                    type: 'turn',
+                    title: 'Your turn',
+                    subtitle: 'Find the follow-up blow!',
+                  });
                 }
               } else {
                 onPuzzleComplete();
@@ -359,9 +353,10 @@ export const TrainingApp: React.FC = () => {
             brush: 'red',
           },
         ]);
-        setFeedback({
+        setStatusText({
           type: 'blunder',
-          message: `⚠️ In the game you played ${move.san}! Eval dropped from ${currentPuzzle.eval_before} to ${currentPuzzle.eval_after_played}. Find the tactical solution!`,
+          title: `Game Blunder (${move.san})!`,
+          subtitle: `That's what you played in the game! Eval crashed from ${currentPuzzle.eval_before} to ${currentPuzzle.eval_after_played}.`,
         });
 
         // Snap back
@@ -382,9 +377,10 @@ export const TrainingApp: React.FC = () => {
             brush: 'red',
           },
         ]);
-        setFeedback({
+        setStatusText({
           type: 'error',
-          message: `❌ Not the best move (${move.san}). Try again or ask for a hint!`,
+          title: 'Not the move.',
+          subtitle: 'That is not the winning continuation. Try again!',
         });
 
         // Snap back
@@ -395,7 +391,7 @@ export const TrainingApp: React.FC = () => {
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [chess, currentPuzzle, puzzlePly, viewOnly, isCompleted, autoOnlyMove, onPuzzleComplete]
+    [chess, currentPuzzle, playedMoves, viewOnly, isCompleted, onPuzzleComplete]
   );
 
   // Auto-play the full solution sequence till the end
@@ -407,6 +403,7 @@ export const TrainingApp: React.FC = () => {
     const continuation = currentPuzzle.continuation_san || [];
     let currentC = new Chess(currentPuzzle.fen);
     let step = 0;
+    const movesList: string[] = [];
 
     const playNextStep = () => {
       if (!isAutoPlayingRef.current || step >= continuation.length) {
@@ -423,6 +420,8 @@ export const TrainingApp: React.FC = () => {
           else sounds.playMove();
           if (currentC.isCheck()) setTimeout(() => sounds.playCheck(), 100);
 
+          movesList.push(m.san);
+          setPlayedMoves([...movesList]);
           setChess(new Chess(currentC.fen()));
           setBoardFen(currentC.fen());
           setLastMove([m.from as Key, m.to as Key]);
@@ -433,11 +432,10 @@ export const TrainingApp: React.FC = () => {
               brush: step % 2 === 0 ? 'green' : 'blue',
             },
           ]);
-          setPuzzlePly(step + 1);
 
           step++;
           if (step < continuation.length && !currentC.isGameOver()) {
-            setTimeout(playNextStep, 500);
+            setTimeout(playNextStep, 450);
           } else {
             isAutoPlayingRef.current = false;
             onPuzzleComplete();
@@ -452,13 +450,13 @@ export const TrainingApp: React.FC = () => {
     playNextStep();
   }, [currentPuzzle, onPuzzleComplete]);
 
-  // Hint button
+  // Hint button (draws subtle arrow on piece)
   const handleHint = useCallback(() => {
     if (!currentPuzzle) return;
     const continuation = currentPuzzle.continuation_san || [];
-    const targetSan = continuation[puzzlePly] || currentPuzzle.best_move_san;
+    const targetSan = continuation[playedMoves.length] || currentPuzzle.best_move_san;
 
-    // Find move in current position
+    // Find piece to move in current position
     const moves = chess.moves({ verbose: true });
     const targetMove = moves.find((m) => m.san === targetSan);
 
@@ -469,17 +467,13 @@ export const TrainingApp: React.FC = () => {
           brush: 'yellow',
         },
       ]);
-      setFeedback({
+      setStatusText({
         type: 'hint',
-        message: `💡 Hint: Focus on piece on ${targetMove.from.toUpperCase()}! Theme: ${currentPuzzle.primary_theme}.`,
-      });
-    } else {
-      setFeedback({
-        type: 'hint',
-        message: `💡 Theme: ${currentPuzzle.primary_theme}. Solution involves ${currentPuzzle.best_move_san}.`,
+        title: 'Tactical Hint',
+        subtitle: `Focus on the piece on ${targetMove.from.toUpperCase()}! Theme: ${currentPuzzle.primary_theme}.`,
       });
     }
-  }, [chess, currentPuzzle, puzzlePly]);
+  }, [chess, currentPuzzle, playedMoves]);
 
   // Show Game Move
   const handleShowGameBlunder = useCallback(() => {
@@ -495,9 +489,10 @@ export const TrainingApp: React.FC = () => {
       },
     ]);
 
-    setFeedback({
+    setStatusText({
       type: 'blunder',
-      message: `⏪ In the game you played ${currentPuzzle.played_move_san}. Eval fell from ${currentPuzzle.eval_before} to ${currentPuzzle.eval_after_played} (-${(currentPuzzle.eval_drop_cp / 100).toFixed(1)} pawns).`,
+      title: `Game Blunder (${currentPuzzle.played_move_san})`,
+      subtitle: `Eval dropped from ${currentPuzzle.eval_before} to ${currentPuzzle.eval_after_played} (-${(currentPuzzle.eval_drop_cp / 100).toFixed(1)} pawns).`,
     });
   }, [currentPuzzle]);
 
@@ -572,32 +567,9 @@ export const TrainingApp: React.FC = () => {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [handleNext, handlePrev, handleHint, handleAutoPlaySolution, handleShowGameBlunder, handleFlip, handleSoundToggle]);
 
-  // Import custom puzzles JSON
-  const handleImportFile = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      try {
-        const text = event.target?.result as string;
-        const parsed = JSON.parse(text);
-        const list = Array.isArray(parsed) ? parsed : parsed.puzzles;
-        if (Array.isArray(list) && list.length > 0) {
-          setAllPuzzles(list);
-          setFilteredIndex(0);
-          alert(`Successfully loaded ${list.length} puzzles!`);
-        }
-      } catch (err) {
-        alert('Failed to parse puzzle JSON file.');
-      }
-    };
-    reader.readAsText(file);
-  };
-
   const isCurrentSolved = solvedIds.has(currentPuzzle?.id || '');
-  const continuation = currentPuzzle?.continuation_san || [];
 
-  // Live arrow from browser engine if enabled and puzzle solved/analyzing
+  // Live arrow from browser engine if in analysis mode
   const combinedShapes = useMemo(() => {
     const list = [...shapes];
     if (engineEnabled && liveEval && liveEval.bestMove && isCompleted) {
@@ -614,6 +586,24 @@ export const TrainingApp: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-[#161512] text-[#bababa] font-sans antialiased flex flex-col selection:bg-amber-500 selection:text-black">
+      {/* Engine Loading Screen */}
+      {engineLoading && (
+        <div className="fixed inset-0 bg-[#161512] z-50 flex flex-col items-center justify-center space-y-4">
+          <div className="w-14 h-14 rounded-2xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-3xl animate-bounce">
+            ♟
+          </div>
+          <h2 className="text-lg font-bold text-white tracking-wide">ShohanTraining</h2>
+          <p className="text-xs text-[#888]">Loading Stockfish Engine (WASM)...</p>
+          <div className="w-56 h-1.5 bg-[#2d2b25] rounded-full overflow-hidden">
+            <div
+              className="h-full bg-amber-500 transition-all duration-300"
+              style={{ width: `${engineProgress}%` }}
+            />
+          </div>
+          <span className="text-[11px] font-mono text-amber-400">{engineProgress}%</span>
+        </div>
+      )}
+
       {/* Top Navbar */}
       <header className="h-14 bg-[#1e1c18] border-b border-[#2d2b25] px-4 md:px-6 flex items-center justify-between shadow-md z-30">
         <div className="flex items-center gap-3">
@@ -623,16 +613,16 @@ export const TrainingApp: React.FC = () => {
           <div>
             <h1 className="text-base md:text-lg font-bold text-white tracking-wide flex items-center gap-2">
               <span>ShohanTraining</span>
-              <span className="text-[10px] bg-amber-500/20 text-amber-400 border border-amber-500/30 px-1.5 py-0.5 rounded font-mono font-semibold">
-                Stockfish Browser Engine
+              <span className="text-[10px] bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-1.5 py-0.5 rounded font-mono font-semibold flex items-center gap-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                Stockfish Ready
               </span>
             </h1>
           </div>
         </div>
 
-        {/* Stats & Quick Actions */}
+        {/* Stats & Controls */}
         <div className="flex items-center gap-2 md:gap-3 text-xs">
-          {/* Live Engine Toggle */}
           <button
             onClick={handleEngineToggle}
             className={`px-2.5 py-1 rounded-lg border font-mono text-[11px] flex items-center gap-1.5 transition ${
@@ -640,9 +630,8 @@ export const TrainingApp: React.FC = () => {
                 ? 'bg-emerald-950/80 border-emerald-500/50 text-emerald-300'
                 : 'bg-[#161512] border-[#2d2b25] text-[#7e7b73]'
             }`}
-            title="Toggle Live In-Browser Stockfish Engine"
+            title="Toggle Live Stockfish Engine"
           >
-            <span className={`w-2 h-2 rounded-full ${engineEnabled ? 'bg-emerald-400 animate-pulse' : 'bg-gray-500'}`} />
             <span>Engine: {engineEnabled ? 'ON' : 'OFF'}</span>
           </button>
 
@@ -683,11 +672,11 @@ export const TrainingApp: React.FC = () => {
       </header>
 
       {/* Main Content Arena */}
-      <main className="flex-1 max-w-6xl w-full mx-auto p-3 md:p-6 grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+      <main className="flex-1 max-w-6xl w-full mx-auto p-3 md:p-6 grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
         {/* Left Side: Board & Eval Bar */}
         <div className="lg:col-span-7 flex flex-col items-center">
           <div className="w-full max-w-[530px] space-y-3">
-            {/* Opponent Info Header */}
+            {/* Opponent Header */}
             <div className="bg-[#1e1c18] border border-[#2d2b25] rounded-xl px-3.5 py-2 flex items-center justify-between text-xs">
               <div className="flex items-center gap-2 truncate">
                 <span
@@ -720,14 +709,12 @@ export const TrainingApp: React.FC = () => {
 
             {/* Board Container with Eval Bar */}
             <div className="flex gap-2.5 items-stretch justify-center">
-              {/* Lichess Vertical Eval Bar (live engine eval or precomputed) */}
               <EvalBar
                 scoreText={engineEnabled && liveEval ? liveEval.score : currentPuzzle.eval_before}
                 orientation={orientation}
                 className="shrink-0"
               />
 
-              {/* Lichess Board (Chessground) */}
               <div className="flex-1 max-w-[490px]">
                 <LichessBoard
                   fen={boardFen}
@@ -742,7 +729,7 @@ export const TrainingApp: React.FC = () => {
               </div>
             </div>
 
-            {/* Shohan Profile Bar (Bottom of board) */}
+            {/* Player Bottom Bar */}
             <div className="bg-[#1e1c18] border border-[#2d2b25] rounded-xl px-3.5 py-2 flex items-center justify-between text-xs">
               <div className="flex items-center gap-2">
                 <span
@@ -751,42 +738,12 @@ export const TrainingApp: React.FC = () => {
                   }`}
                 />
                 <span className="text-white font-semibold">ShohanTheRock</span>
-                <span className="text-amber-400 font-mono font-medium">({currentPuzzle.player_rating || 2280})</span>
-              </div>
-              
-              <div className="flex items-center gap-3">
-                <label className="flex items-center gap-1.5 cursor-pointer text-[11px] text-[#888] select-none">
-                  <input
-                    type="checkbox"
-                    checked={autoOnlyMove}
-                    onChange={(e) => setAutoOnlyMove(e.target.checked)}
-                    className="rounded accent-amber-500"
-                  />
-                  <span>Auto Only-Move</span>
-                </label>
-                <span className="text-[#7e7b73] font-mono text-[11px]">
-                  Move {currentPuzzle.move_number}
+                <span className="text-amber-400 font-mono font-medium">
+                  ({currentPuzzle.player_rating || 2280})
                 </span>
               </div>
-            </div>
-
-            {/* Feedback & Interaction Status Banner */}
-            <div
-              className={`min-h-[46px] rounded-xl p-3 flex items-center justify-between text-xs font-medium border transition-all duration-200 ${
-                feedback.type === 'solved'
-                  ? 'bg-emerald-950/80 border-emerald-500/60 text-emerald-200 shadow-lg shadow-emerald-950/40'
-                  : feedback.type === 'blunder'
-                  ? 'bg-rose-950/80 border-rose-500/60 text-rose-200 shadow-lg shadow-rose-950/40'
-                  : feedback.type === 'error'
-                  ? 'bg-rose-950/50 border-rose-600/40 text-rose-300'
-                  : feedback.type === 'hint'
-                  ? 'bg-amber-950/70 border-amber-500/50 text-amber-200'
-                  : 'bg-[#1e1c18] border-[#2d2b25] text-slate-300'
-              }`}
-            >
-              <span className="leading-snug">{feedback.message}</span>
-              <span className="font-mono text-[11px] text-amber-400 shrink-0 ml-2">
-                {currentPuzzle.eval_before}
+              <span className="text-[#7e7b73] font-mono text-[11px]">
+                Move {currentPuzzle.move_number}
               </span>
             </div>
 
@@ -796,7 +753,7 @@ export const TrainingApp: React.FC = () => {
                 onClick={handlePrev}
                 disabled={filteredIndex === 0}
                 className="bg-[#24221d] hover:bg-[#2e2b25] disabled:opacity-30 disabled:cursor-not-allowed text-white text-xs font-semibold py-2.5 rounded-xl border border-[#38352e] transition active:scale-95 flex items-center justify-center gap-1"
-                title="Previous Puzzle (Left Arrow)"
+                title="Previous Puzzle"
               >
                 ◀ Prev
               </button>
@@ -812,7 +769,7 @@ export const TrainingApp: React.FC = () => {
               <button
                 onClick={handleShowGameBlunder}
                 className="bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 text-xs font-semibold py-2.5 rounded-xl border border-rose-500/30 transition active:scale-95 flex items-center justify-center gap-1"
-                title="Show Game Move (B)"
+                title="Show What You Played in Game (B)"
               >
                 ⏪ Game Move
               </button>
@@ -821,7 +778,7 @@ export const TrainingApp: React.FC = () => {
                 onClick={handleNext}
                 disabled={filteredIndex >= filteredPuzzles.length - 1}
                 className="bg-emerald-600 hover:bg-emerald-500 disabled:opacity-30 disabled:cursor-not-allowed text-white text-xs font-bold py-2.5 rounded-xl shadow-lg shadow-emerald-700/20 transition active:scale-95 flex items-center justify-center gap-1"
-                title="Next Puzzle (Space or Right Arrow)"
+                title="Next Puzzle"
               >
                 Next ▶
               </button>
@@ -832,7 +789,7 @@ export const TrainingApp: React.FC = () => {
               <button
                 onClick={handleAutoPlaySolution}
                 className="hover:text-amber-400 underline transition flex items-center gap-1"
-                title="Auto-play full solution sequence till conclusion (S)"
+                title="Watch engine auto-play solution till conclusion (S)"
               >
                 <span>▶ Auto-Play Solution</span>
               </button>
@@ -842,7 +799,7 @@ export const TrainingApp: React.FC = () => {
                 className="hover:text-white transition"
                 title="Restart this position"
               >
-                🔄 Reset Position
+                🔄 Reset
               </button>
 
               <button
@@ -850,21 +807,24 @@ export const TrainingApp: React.FC = () => {
                 className="hover:text-white transition flex items-center gap-1"
                 title="Flip Board (F)"
               >
-                🔄 Flip Orientation
+                🔄 Flip Board
               </button>
             </div>
           </div>
         </div>
 
-        {/* Right Side: Tactical Breakdown & Continuation Line */}
+        {/* Right Side: Authentic Lichess Puzzle Status & Notation */}
         <div className="lg:col-span-5 space-y-4">
           <div className="bg-[#1e1c18] border border-[#2d2b25] rounded-2xl p-5 shadow-xl space-y-4">
+            {/* Header info */}
             <div className="flex items-center justify-between border-b border-[#2d2b25] pb-3">
-              <div className="flex items-center gap-2">
-                <span className="text-base">🎯</span>
-                <h2 className="text-sm font-bold text-white uppercase tracking-wider">
-                  Tactical Breakdown
+              <div>
+                <h2 className="text-base font-bold text-white tracking-wide">
+                  Puzzle #{filteredIndex + 1}
                 </h2>
+                <p className="text-xs text-[#888]">
+                  {currentPuzzle.opening_name} ({currentPuzzle.opening_eco})
+                </p>
               </div>
               <div className="flex items-center gap-1.5">
                 {isCurrentSolved && (
@@ -872,111 +832,99 @@ export const TrainingApp: React.FC = () => {
                     ✓ Solved
                   </span>
                 )}
-                <span className="font-mono text-xs text-amber-400 bg-amber-400/10 px-2 py-0.5 rounded border border-amber-400/20">
-                  #{filteredIndex + 1} of {filteredPuzzles.length}
-                </span>
-              </div>
-            </div>
-
-            {/* Continuation Line Stepper */}
-            <div className="bg-[#141310] border border-[#2d2b25] rounded-xl p-3 space-y-2">
-              <div className="text-[11px] text-[#7e7b73] uppercase font-semibold tracking-wider flex justify-between">
-                <span>Tactical Line:</span>
-                <span className="font-mono text-amber-400">Step {puzzlePly} / {continuation.length}</span>
-              </div>
-              <div className="flex flex-wrap gap-1.5 font-mono text-xs">
-                {continuation.map((m, idx) => {
-                  const isCurrent = idx === puzzlePly;
-                  const isDone = idx < puzzlePly;
-                  const isUserPly = idx % 2 === 0;
-                  return (
-                    <span
-                      key={idx}
-                      className={`px-2 py-0.5 rounded ${
-                        isCurrent
-                          ? 'bg-amber-500 text-black font-bold animate-pulse'
-                          : isDone
-                          ? 'bg-emerald-950/70 text-emerald-300 border border-emerald-500/30 font-medium'
-                          : 'bg-[#1e1c18] text-[#666] border border-[#2d2b25]'
-                      }`}
-                    >
-                      {idx + 1}. {isDone || isCompleted || isCurrentSolved ? m : '???'} {isUserPly ? '👤' : '🤖'}
-                    </span>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* Comparison Metrics */}
-            <div className="space-y-2.5 text-xs">
-              <div className="flex justify-between items-center bg-[#161512] px-3 py-2 rounded-xl border border-[#2d2b25]">
-                <span className="text-[#7e7b73]">Opening:</span>
-                <span className="font-semibold text-white text-right">
-                  {currentPuzzle.opening_name} ({currentPuzzle.opening_eco})
-                </span>
-              </div>
-
-              <div className="flex justify-between items-center bg-[#161512] px-3 py-2 rounded-xl border border-[#2d2b25]">
-                <span className="text-[#7e7b73]">Tactical Theme:</span>
-                <span className="font-bold text-amber-400 text-right">
+                <span className="text-xs bg-amber-500/10 text-amber-400 px-2 py-0.5 rounded font-mono border border-amber-500/20">
                   {currentPuzzle.primary_theme}
                 </span>
               </div>
-
-              <div className="flex justify-between items-center bg-[#161512] px-3 py-2 rounded-xl border border-[#2d2b25]">
-                <span className="text-rose-400 font-medium">In Game You Played:</span>
-                <div className="text-right">
-                  <span className="font-mono font-bold text-rose-300">
-                    {currentPuzzle.played_move_san}
-                  </span>
-                  <span className="text-[10px] text-rose-400/80 ml-1.5 font-mono">
-                    (-{(currentPuzzle.eval_drop_cp / 100).toFixed(1)})
-                  </span>
-                </div>
-              </div>
-
-              <div className="flex justify-between items-center bg-[#161512] px-3 py-2 rounded-xl border border-[#2d2b25]">
-                <span className="text-emerald-400 font-medium">Stockfish Solution:</span>
-                <span className="font-mono font-bold text-emerald-400">
-                  {isCurrentSolved || isCompleted ? currentPuzzle.best_move_san : '??? (Hidden)'}
-                </span>
-              </div>
             </div>
 
-            {/* Coach's Analysis & Explanation - Hidden Until Solved! */}
-            <div className="bg-[#1e1c18] border border-[#2d2b25] rounded-xl p-3.5 space-y-2 text-xs leading-relaxed">
-              <div className="font-semibold text-amber-300 flex items-center justify-between">
-                <span className="flex items-center gap-1.5">
-                  <span>🧠</span> {isCurrentSolved || isCompleted ? "Coach's Post-Game Analysis:" : "Tactical Objective:"}
-                </span>
-                {!(isCurrentSolved || isCompleted) && (
-                  <span className="text-[10px] text-[#7e7b73] font-mono italic">
-                    Solution locked
-                  </span>
-                )}
-              </div>
-
-              {isCurrentSolved || isCompleted ? (
-                <div className="space-y-1.5">
-                  <p className="text-slate-300 leading-relaxed">{currentPuzzle.explanation}</p>
-                  <div className="pt-2 border-t border-[#2d2b25] font-mono text-[11px] text-emerald-400">
-                    <span className="text-[#7e7b73] block mb-0.5 font-sans">Full Engine Line:</span>
-                    {currentPuzzle.continuation_str}
-                  </div>
-                </div>
-              ) : (
-                <div className="text-[#888] py-2.5 px-3 bg-[#12110e] rounded-lg border border-dashed border-[#2d2b25] space-y-1">
-                  <p className="text-slate-300">
-                    You have a winning tactical shot here! Calculate forcing candidate moves to exploit your opponent's weaknesses.
-                  </p>
-                  <p className="text-[11px] text-[#6b675e] italic">
-                    🔒 The exact moves and strategic coaching breakdown will reveal once you solve the puzzle or click Solution.
-                  </p>
-                </div>
+            {/* Big Lichess Status Banner */}
+            <div
+              className={`p-4 rounded-xl border text-center space-y-1 transition-all ${
+                statusText.type === 'solved'
+                  ? 'bg-emerald-950/80 border-emerald-500/60 text-emerald-200'
+                  : statusText.type === 'blunder'
+                  ? 'bg-rose-950/80 border-rose-500/60 text-rose-200'
+                  : statusText.type === 'error'
+                  ? 'bg-rose-950/60 border-rose-600/40 text-rose-300'
+                  : statusText.type === 'hint'
+                  ? 'bg-amber-950/70 border-amber-500/50 text-amber-200'
+                  : statusText.type === 'success'
+                  ? 'bg-emerald-950/60 border-emerald-500/40 text-emerald-300'
+                  : 'bg-[#141310] border-[#2d2b25] text-white'
+              }`}
+            >
+              <div className="text-base font-bold tracking-wide">{statusText.title}</div>
+              {statusText.subtitle && (
+                <div className="text-xs text-[#999] leading-snug">{statusText.subtitle}</div>
               )}
             </div>
 
-            {/* Keyboard Shortcuts Bar */}
+            {/* Lichess Move History Notation (Only moves played so far!) */}
+            <div className="bg-[#141310] border border-[#2d2b25] rounded-xl p-3 min-h-[140px] flex flex-col justify-between">
+              <div className="text-[11px] text-[#7e7b73] uppercase font-semibold tracking-wider flex justify-between border-b border-[#2d2b25] pb-2 mb-2">
+                <span>Move Notation</span>
+                <span className="font-mono text-emerald-400 text-[10px]">
+                  {isCompleted ? 'Clear Conclusion Reached' : `${playedMoves.length} moves played`}
+                </span>
+              </div>
+
+              <div className="font-mono text-xs flex-1">
+                {playedMoves.length === 0 ? (
+                  <div className="text-[#555] italic text-center py-6">
+                    Play the winning move on the board...
+                  </div>
+                ) : (
+                  <div className="flex flex-wrap gap-2 text-xs">
+                    {playedMoves.map((m, idx) => {
+                      const isUser = idx % 2 === 0;
+                      return (
+                        <span
+                          key={idx}
+                          className={`px-2 py-1 rounded ${
+                            isUser
+                              ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                              : 'bg-slate-800 text-slate-300 border border-slate-700'
+                          }`}
+                        >
+                          {idx + 1}. {m} {isUser ? '👤' : '🤖'}
+                        </span>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Post-Puzzle Analysis (Unlocked only after completion!) */}
+            {isCompleted && (
+              <div className="bg-[#141310] border border-emerald-500/30 rounded-xl p-3.5 space-y-2 text-xs animate-fadeIn">
+                <div className="font-semibold text-emerald-400 flex items-center justify-between">
+                  <span>🧠 Post-Game Analysis</span>
+                  <span className="font-mono text-[10px] text-[#888]">
+                    In game: {currentPuzzle.played_move_san} (-{(currentPuzzle.eval_drop_cp / 100).toFixed(1)})
+                  </span>
+                </div>
+                <p className="text-slate-300 leading-relaxed">{currentPuzzle.explanation}</p>
+                <div className="pt-2 border-t border-[#2d2b25] font-mono text-[11px] text-emerald-300">
+                  <span className="text-[#666] block font-sans text-[10px]">Full Continuation:</span>
+                  {currentPuzzle.continuation_str}
+                </div>
+              </div>
+            )}
+
+            {/* Quick Next Button When Solved */}
+            {isCompleted && (
+              <button
+                onClick={handleNext}
+                className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2.5 rounded-xl shadow-lg transition active:scale-95 text-xs flex items-center justify-center gap-1.5"
+              >
+                <span>Next Puzzle</span>
+                <span>▶</span>
+              </button>
+            )}
+
+            {/* Keyboard Shortcuts */}
             <div className="pt-1 flex items-center justify-between text-[11px] text-[#6b675e] border-t border-[#2d2b25]">
               <span>Shortcuts:</span>
               <div className="flex gap-2 font-mono">
@@ -988,10 +936,10 @@ export const TrainingApp: React.FC = () => {
             </div>
           </div>
 
-          {/* Quick Filter Tags */}
+          {/* Quick Theme Filters */}
           <div className="bg-[#1e1c18] border border-[#2d2b25] rounded-2xl p-4 shadow-xl space-y-2.5">
             <h3 className="text-xs font-bold text-white uppercase tracking-wider">
-              Quick Theme Filters
+              Filter by Theme
             </h3>
             <div className="flex flex-wrap gap-1.5 text-xs">
               {[
@@ -1023,7 +971,7 @@ export const TrainingApp: React.FC = () => {
         </div>
       </main>
 
-      {/* Drawer / Modal: Browse All Puzzles */}
+      {/* Drawer: Browse All Puzzles */}
       {isDrawerOpen && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex justify-end">
           <div className="w-full max-w-md bg-[#1e1c18] border-l border-[#2d2b25] h-full flex flex-col shadow-2xl p-5 space-y-4">
@@ -1039,7 +987,6 @@ export const TrainingApp: React.FC = () => {
               </button>
             </div>
 
-            {/* Filter Controls in Drawer */}
             <div className="space-y-2">
               <input
                 type="text"
@@ -1072,7 +1019,6 @@ export const TrainingApp: React.FC = () => {
               </div>
             </div>
 
-            {/* Scrollable list of cards */}
             <div className="flex-1 overflow-y-auto space-y-1.5 pr-1">
               {filteredPuzzles.map((p, idx) => {
                 const isSolved = solvedIds.has(p.id);
@@ -1118,18 +1064,7 @@ export const TrainingApp: React.FC = () => {
               })}
             </div>
 
-            {/* Custom Import / Reset */}
             <div className="pt-2 border-t border-[#2d2b25] flex justify-between items-center text-xs text-[#7e7b73]">
-              <label className="text-amber-400 hover:text-amber-300 underline cursor-pointer">
-                Import JSON
-                <input
-                  type="file"
-                  accept=".json"
-                  onChange={handleImportFile}
-                  className="hidden"
-                />
-              </label>
-
               <button
                 onClick={() => {
                   if (confirm('Reset solved puzzle progress and streak?')) {
