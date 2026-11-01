@@ -12,15 +12,23 @@ import defaultPuzzlesData from '../data/puzzles.json';
 // Convert chess.js instance to chessground dests map
 function toDests(chess: Chess): Map<Key, Key[]> {
   const dests = new Map<Key, Key[]>();
-  chess.moves({ verbose: true }).forEach((m) => {
-    const from = m.from as Key;
-    const to = m.to as Key;
-    const ms = dests.get(from);
-    if (ms) ms.push(to);
-    else dests.set(from, [to]);
-  });
+  try {
+    chess.moves({ verbose: true }).forEach((m) => {
+      const from = m.from as Key;
+      const to = m.to as Key;
+      const ms = dests.get(from);
+      if (ms) ms.push(to);
+      else dests.set(from, [to]);
+    });
+  } catch (e) {
+    console.warn('toDests error:', e);
+  }
   return dests;
 }
+
+const defaultPuzzlesList: ChessPuzzle[] =
+  (defaultPuzzlesData as { puzzles: ChessPuzzle[] }).puzzles || [];
+const firstPuzzle: ChessPuzzle = defaultPuzzlesList[0];
 
 export const TrainingApp: React.FC = () => {
   // Engine loading screen state
@@ -28,9 +36,7 @@ export const TrainingApp: React.FC = () => {
   const [engineProgress, setEngineProgress] = useState<number>(15);
 
   // Puzzles dataset
-  const [allPuzzles, setAllPuzzles] = useState<ChessPuzzle[]>(
-    (defaultPuzzlesData as { puzzles: ChessPuzzle[] }).puzzles || []
-  );
+  const [allPuzzles] = useState<ChessPuzzle[]>(defaultPuzzlesList);
 
   // Solved IDs from localStorage
   const [solvedIds, setSolvedIds] = useState<Set<string>>(() => {
@@ -89,16 +95,29 @@ export const TrainingApp: React.FC = () => {
 
   // Current Index in filtered list
   const [filteredIndex, setFilteredIndex] = useState<number>(0);
-  const currentPuzzle = filteredPuzzles[filteredIndex] || allPuzzles[0];
+  const currentPuzzle = filteredPuzzles[filteredIndex] || allPuzzles[0] || firstPuzzle;
 
-  // Board & Chess State
-  const [chess, setChess] = useState<Chess>(() => new Chess());
-  const [boardFen, setBoardFen] = useState<string>('');
-  const [orientation, setOrientation] = useState<'white' | 'black'>('white');
-  const [dests, setDests] = useState<Map<Key, Key[]>>(new Map());
+  // Board & Chess State - initialized with firstPuzzle to guarantee instant display
+  const [chess, setChess] = useState<Chess>(() => {
+    try {
+      return new Chess(firstPuzzle?.fen);
+    } catch {
+      return new Chess();
+    }
+  });
+  const [boardFen, setBoardFen] = useState<string>(() => firstPuzzle?.fen || '');
+  const [orientation, setOrientation] = useState<'white' | 'black'>(() => firstPuzzle?.player_color || 'white');
+  const [dests, setDests] = useState<Map<Key, Key[]>>(() => {
+    try {
+      return toDests(new Chess(firstPuzzle?.fen));
+    } catch {
+      return new Map();
+    }
+  });
   const [lastMove, setLastMove] = useState<Key[]>([]);
   const [shapes, setShapes] = useState<DrawShape[]>([]);
   const [viewOnly, setViewOnly] = useState<boolean>(false);
+  const [boardRevision, setBoardRevision] = useState<number>(0);
 
   // Move tracking (Lichess style - only records moves as they are played)
   const [playedMoves, setPlayedMoves] = useState<string[]>([]);
@@ -116,7 +135,7 @@ export const TrainingApp: React.FC = () => {
   }>({
     type: 'turn',
     title: 'Your turn',
-    subtitle: 'Find the best move!',
+    subtitle: `Find the best move for ${firstPuzzle?.turn || 'White'}!`,
   });
 
   // Simulated Engine Download & Init Screen
@@ -135,6 +154,11 @@ export const TrainingApp: React.FC = () => {
     };
   }, []);
 
+  // Force snapback helper
+  const forceResetBoard = useCallback(() => {
+    setBoardRevision((r) => r + 1);
+  }, []);
+
   // Load / Reset Puzzle
   const loadPuzzle = useCallback(
     (puzzle: ChessPuzzle) => {
@@ -151,6 +175,7 @@ export const TrainingApp: React.FC = () => {
         setViewOnly(false);
         setPlayedMoves([]);
         setIsCompleted(false);
+        setBoardRevision((r) => r + 1);
 
         setStatusText({
           type: 'turn',
@@ -216,18 +241,17 @@ export const TrainingApp: React.FC = () => {
     (orig: Key, dest: Key) => {
       if (viewOnly || isAutoPlayingRef.current) return;
 
-      const continuation = currentPuzzle.continuation_san || [];
-      const currentPly = playedMoves.length;
-      const expectedSan = continuation[currentPly] || currentPuzzle.best_move_san;
-      const expectedUci = currentPuzzle.best_move_uci;
-      const playedUci = orig + dest;
-
-      // Make move in chess.js
+      // Wrap in try-catch to prevent chess.js 1.0.0-beta uncaught exceptions
       const tempChess = new Chess(chess.fen());
-      const move = tempChess.move({ from: orig, to: dest, promotion: 'q' });
+      let move: any = null;
+      try {
+        move = tempChess.move({ from: orig, to: dest, promotion: 'q' });
+      } catch {
+        move = null;
+      }
 
       if (!move) {
-        sounds.playError();
+        forceResetBoard();
         return;
       }
 
@@ -245,18 +269,28 @@ export const TrainingApp: React.FC = () => {
         return;
       }
 
-      // Check if move matches expected tactical continuation
-      const isSanMatch = move.san === expectedSan;
-      const isUciMatch = currentPly === 0 && playedUci === expectedUci.slice(0, 4);
+      const continuation = currentPuzzle.continuation_san || [];
+      const currentPly = playedMoves.length;
+      const expectedSan = continuation[currentPly] || currentPuzzle.best_move_san;
+      const expectedUci = currentPuzzle.best_move_uci;
+      const playedUci = orig + dest;
+
+      const cleanSan = (s: string) => (s ? s.replace(/[+#x=]/g, '') : '');
+      const isSanMatch =
+        move.san === expectedSan || cleanSan(move.san) === cleanSan(expectedSan);
+      const isUciMatch =
+        currentPly === 0 &&
+        (playedUci === expectedUci.slice(0, 4) || playedUci === expectedUci);
 
       // Check if user played their actual game blunder
       const isGameBlunder =
         currentPly === 0 &&
         (move.san === currentPuzzle.played_move_san ||
-          playedUci === currentPuzzle.played_move_uci.slice(0, 4));
+          playedUci === currentPuzzle.played_move_uci.slice(0, 4) ||
+          cleanSan(move.san) === cleanSan(currentPuzzle.played_move_san));
 
       if (isSanMatch || isUciMatch) {
-        // --- CORRECT MOVE ---
+        // --- 1. CORRECT USER MOVE ---
         if (move.captured) sounds.playCapture();
         else sounds.playMove();
 
@@ -278,16 +312,23 @@ export const TrainingApp: React.FC = () => {
           },
         ]);
 
-        // Check if game is over (checkmate / stalemate)
-        if (tempChess.isGameOver()) {
+        // Calculate the last user ply index in this line
+        const lastUserPly =
+          continuation.length > 0
+            ? continuation.length % 2 === 0
+              ? continuation.length - 2
+              : continuation.length - 1
+            : 0;
+
+        // Check if game is over (mate) or user reached the end of their required moves
+        if (tempChess.isGameOver() || currentPly >= lastUserPly) {
           onPuzzleComplete();
           return;
         }
 
-        // Check if opponent has a reply in the continuation
+        // --- 2. OPPONENT AUTO-REPLY ---
         const oppReplySan = continuation[nextMoves.length];
         if (oppReplySan) {
-          // Opponent auto-moves with engine!
           setViewOnly(true);
           setStatusText({
             type: 'success',
@@ -296,8 +337,8 @@ export const TrainingApp: React.FC = () => {
           });
 
           setTimeout(() => {
-            const oppChess = new Chess(tempChess.fen());
             try {
+              const oppChess = new Chess(tempChess.fen());
               const oppMove = oppChess.move(oppReplySan);
               if (oppMove) {
                 if (oppMove.captured) sounds.playCapture();
@@ -313,19 +354,19 @@ export const TrainingApp: React.FC = () => {
                 setBoardFen(oppChess.fen());
                 setLastMove([oppMove.from as Key, oppMove.to as Key]);
                 setDests(toDests(oppChess));
+                setViewOnly(false);
 
-                // Check if game is over
+                // If opponent got checkmated
                 if (oppChess.isGameOver()) {
                   onPuzzleComplete();
                   return;
                 }
 
-                // Check if reached clear conclusion
+                // If reached full continuation length
                 if (postOppMoves.length >= continuation.length) {
                   onPuzzleComplete();
                 } else {
-                  // User has follow-up
-                  setViewOnly(false);
+                  // User's turn for next move
                   setStatusText({
                     type: 'turn',
                     title: 'Your turn',
@@ -335,17 +376,20 @@ export const TrainingApp: React.FC = () => {
               } else {
                 onPuzzleComplete();
               }
-            } catch {
+            } catch (err) {
+              console.warn('Opponent reply failed:', err);
               onPuzzleComplete();
             }
-          }, 400);
+          }, 350);
         } else {
-          // Reached clear conclusion!
           onPuzzleComplete();
         }
       } else if (isGameBlunder) {
-        // --- PLAYED GAME BLUNDER ---
+        // --- 3. PLAYED GAME BLUNDER ---
         sounds.playError();
+        setStreak(0);
+        localStorage.setItem('shohan_training_streak', '0');
+
         setShapes([
           {
             orig,
@@ -359,13 +403,12 @@ export const TrainingApp: React.FC = () => {
           subtitle: `That's what you played in the game! Eval crashed from ${currentPuzzle.eval_before} to ${currentPuzzle.eval_after_played}.`,
         });
 
-        // Snap back
+        // Snap back piece after short delay
         setTimeout(() => {
-          setBoardFen(chess.fen());
-          setDests(toDests(chess));
-        }, 300);
+          forceResetBoard();
+        }, 350);
       } else {
-        // --- INCORRECT MOVE ---
+        // --- 4. INCORRECT MOVE ---
         sounds.playError();
         setStreak(0);
         localStorage.setItem('shohan_training_streak', '0');
@@ -383,15 +426,13 @@ export const TrainingApp: React.FC = () => {
           subtitle: 'That is not the winning continuation. Try again!',
         });
 
-        // Snap back
+        // Snap back piece after short delay
         setTimeout(() => {
-          setBoardFen(chess.fen());
-          setDests(toDests(chess));
-        }, 300);
+          forceResetBoard();
+        }, 350);
       }
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [chess, currentPuzzle, playedMoves, viewOnly, isCompleted, onPuzzleComplete]
+    [chess, currentPuzzle, playedMoves, viewOnly, isCompleted, onPuzzleComplete, forceResetBoard]
   );
 
   // Auto-play the full solution sequence till the end
@@ -600,42 +641,38 @@ export const TrainingApp: React.FC = () => {
               style={{ width: `${engineProgress}%` }}
             />
           </div>
-          <span className="text-[11px] font-mono text-amber-400">{engineProgress}%</span>
         </div>
       )}
 
       {/* Top Navbar */}
-      <header className="h-14 bg-[#1e1c18] border-b border-[#2d2b25] px-4 md:px-6 flex items-center justify-between shadow-md z-30">
+      <header className="bg-[#1e1c18] border-b border-[#2d2b25] px-4 py-2.5 flex items-center justify-between sticky top-0 z-40 shadow-md">
         <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-lg bg-gradient-to-tr from-amber-600 to-amber-500 flex items-center justify-center text-xl text-black shadow-md font-bold">
-            ♟
-          </div>
-          <div>
-            <h1 className="text-base md:text-lg font-bold text-white tracking-wide flex items-center gap-2">
-              <span>ShohanTraining</span>
-              <span className="text-[10px] bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-1.5 py-0.5 rounded font-mono font-semibold flex items-center gap-1">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                Stockfish Ready
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-amber-400 to-amber-600 flex items-center justify-center font-black text-black text-lg shadow-sm">
+              ♞
+            </div>
+            <div>
+              <h1 className="text-sm font-bold text-white tracking-wide leading-none">
+                ShohanTraining
+              </h1>
+              <span className="text-[10px] text-[#7e7b73] font-mono leading-none">
+                Lichess-Powered Trainer
               </span>
-            </h1>
+            </div>
+          </div>
+
+          <div className="hidden md:flex items-center gap-1.5 ml-4 pl-4 border-l border-[#2d2b25] text-xs">
+            <span className="text-[#888]">Player:</span>
+            <span className="font-semibold text-white">ShohanTheRock</span>
+            <span className="bg-amber-500/10 text-amber-400 font-mono text-[11px] px-1.5 py-0.5 rounded border border-amber-500/20">
+              ~2280 Rapid
+            </span>
           </div>
         </div>
 
-        {/* Stats & Controls */}
-        <div className="flex items-center gap-2 md:gap-3 text-xs">
-          <button
-            onClick={handleEngineToggle}
-            className={`px-2.5 py-1 rounded-lg border font-mono text-[11px] flex items-center gap-1.5 transition ${
-              engineEnabled
-                ? 'bg-emerald-950/80 border-emerald-500/50 text-emerald-300'
-                : 'bg-[#161512] border-[#2d2b25] text-[#7e7b73]'
-            }`}
-            title="Toggle Live Stockfish Engine"
-          >
-            <span>Engine: {engineEnabled ? 'ON' : 'OFF'}</span>
-          </button>
-
-          <div className="hidden sm:flex items-center gap-2 bg-[#161512] border border-[#2d2b25] px-2.5 py-1 rounded-lg">
+        {/* Header Stats & Controls */}
+        <div className="flex items-center gap-2 text-xs">
+          <div className="hidden sm:flex items-center gap-1.5 bg-[#161512] border border-[#2d2b25] px-2.5 py-1 rounded-lg">
             <span className="text-emerald-400 font-bold">{solvedIds.size}</span>
             <span className="text-[#7e7b73]">/ {allPuzzles.length} Solved</span>
           </div>
@@ -725,6 +762,7 @@ export const TrainingApp: React.FC = () => {
                   shapes={combinedShapes}
                   viewOnly={viewOnly}
                   onMove={handleMove}
+                  revision={boardRevision}
                 />
               </div>
             </div>

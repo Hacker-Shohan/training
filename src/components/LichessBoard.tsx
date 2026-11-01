@@ -15,6 +15,7 @@ interface LichessBoardProps {
   viewOnly?: boolean;
   onMove?: (orig: Key, dest: Key) => void;
   className?: string;
+  revision?: number;
 }
 
 export const LichessBoard: React.FC<LichessBoardProps> = ({
@@ -27,9 +28,14 @@ export const LichessBoard: React.FC<LichessBoardProps> = ({
   viewOnly = false,
   onMove,
   className = '',
+  revision = 0,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const apiRef = useRef<Api | null>(null);
+
+  // Keep a ref to the latest onMove callback to eliminate stale closure bugs
+  const onMoveRef = useRef(onMove);
+  onMoveRef.current = onMove;
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -56,9 +62,7 @@ export const LichessBoard: React.FC<LichessBoardProps> = ({
         showDests: true,
         events: {
           after: (orig, dest) => {
-            if (onMove) {
-              onMove(orig, dest);
-            }
+            onMoveRef.current?.(orig, dest);
           },
         },
       },
@@ -78,6 +82,7 @@ export const LichessBoard: React.FC<LichessBoardProps> = ({
     };
   }, []);
 
+  // Synchronize board state on every prop change or revision bump
   useEffect(() => {
     if (!apiRef.current) return;
 
@@ -96,7 +101,7 @@ export const LichessBoard: React.FC<LichessBoardProps> = ({
       },
       lastMove,
     });
-  }, [fen, orientation, turnColor, dests, lastMove, shapes, viewOnly]);
+  }, [fen, orientation, turnColor, dests, lastMove, shapes, viewOnly, revision]);
 
   return (
     <div className={`relative w-full aspect-square rounded-xl overflow-hidden shadow-2xl border-2 border-[#33302b] bg-[#b58863] ${className}`}>
