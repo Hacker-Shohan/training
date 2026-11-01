@@ -25,7 +25,7 @@ export const EvalBar: React.FC<EvalBarProps> = ({ scoreText, orientation, classN
 
   return (
     <div
-      className={`relative w-6 h-full bg-[#202020] rounded-lg overflow-hidden border border-[#383838] flex flex-col justify-end select-none shadow-md ${className}`}
+      className={`relative w-3.5 sm:w-5 shrink-0 bg-[#202020] rounded-lg overflow-hidden border border-[#383838] flex flex-col justify-end select-none shadow-md ${className}`}
       title={`Evaluation: ${scoreText}`}
     >
       <div
@@ -34,7 +34,7 @@ export const EvalBar: React.FC<EvalBarProps> = ({ scoreText, orientation, classN
       />
       <div className="absolute inset-x-0 bottom-1 flex justify-center pointer-events-none">
         <span
-          className={`text-[9px] font-mono font-bold px-0.5 rounded leading-none ${
+          className={`text-[8px] sm:text-[9px] font-mono font-bold px-0.5 rounded leading-none ${
             fillHeight > 50 ? 'text-black' : 'text-white'
           }`}
         >

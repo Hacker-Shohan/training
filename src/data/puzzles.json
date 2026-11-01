@@ -5,9 +5,9 @@
   "sets": [
     {
       "id": "shohan-master",
-      "title": "Shohan: Master Blunders",
-      "subtitle": "120 critical tactical misses by ShohanTheRock (~2280 Rapid)",
-      "icon": "\ud83c\udfaf",
+      "title": "Healthy Mix",
+      "subtitle": "Balanced tactical collection (120 Missed Blows)",
+      "icon": "\ud83d\udd00",
       "badge": "120 Puzzles",
       "puzzles": [
         {
@@ -134,9 +134,12 @@
             "Rf2+",
             "Kc3",
             "Qc1+",
-            "Kd4"
+            "Qc2",
+            "Qxc2+",
+            "Kd4",
+            "Rd2#"
           ],
-          "continuation_str": "Qf1+ Kd2 Rf2+ Kc3 Qc1+ Kd4",
+          "continuation_str": "Qf1+ Kd2 Rf2+ Kc3 Qc1+ Qc2 Qxc2+ Kd4 Rd2#",
           "eval_before": "+M5",
           "eval_after_played": "+0.00",
           "eval_drop_cp": 9995,
@@ -242,9 +245,10 @@
             "Qg7+",
             "Kh5",
             "Qxh7+",
-            "Kg4"
+            "Kg4",
+            "Qh3#"
           ],
-          "continuation_str": "Qg8+ Kh6 Qg7+ Kh5 Qxh7+ Kg4",
+          "continuation_str": "Qg8+ Kh6 Qg7+ Kh5 Qxh7+ Kg4 Qh3#",
           "eval_before": "+M4",
           "eval_after_played": "+10.66",
           "eval_drop_cp": 8930,
@@ -1578,9 +1582,16 @@
             "Qa3",
             "Rxg2+",
             "Kxg2",
-            "Be4+"
+            "Na5",
+            "Qxa5",
+            "Be4+",
+            "Kh2",
+            "Bxc6",
+            "bxc6",
+            "Rd2",
+            "Qa8#"
           ],
-          "continuation_str": "axb5 Rxh2 Qa3 Rxg2+ Kxg2 Be4+",
+          "continuation_str": "axb5 Rxh2 Qa3 Rxg2+ Kxg2 Na5 Qxa5 Be4+ Kh2 Bxc6 bxc6 Rd2 Qa8#",
           "eval_before": "+13.89",
           "eval_after_played": "+8.36",
           "eval_drop_cp": 553,
@@ -4425,9 +4436,18 @@
             "Qd4+",
             "Ke2",
             "Re5+",
-            "Kf3"
+            "Kf3",
+            "Qd3+",
+            "Kg2",
+            "Qxc2+",
+            "Kf3",
+            "Qd3+",
+            "Kf2",
+            "Re2+",
+            "Kf1",
+            "Qd1#"
           ],
-          "continuation_str": "Qe4+ Kd2 Qd4+ Ke2 Re5+ Kf3",
+          "continuation_str": "Qe4+ Kd2 Qd4+ Ke2 Re5+ Kf3 Qd3+ Kg2 Qxc2+ Kf3 Qd3+ Kf2 Re2+ Kf1 Qd1#",
           "eval_before": "+M9",
           "eval_after_played": "+M7",
           "eval_drop_cp": -2,
@@ -4444,8 +4464,8 @@
     },
     {
       "id": "shohan-mates",
-      "title": "Shohan: Forced Checkmates",
-      "subtitle": "Direct knockout mating sequences from his rapid games",
+      "title": "Knockout Checkmates",
+      "subtitle": "Direct mating nets played to checkmate (#)",
       "icon": "\ud83d\udc51",
       "badge": "23 Mates",
       "puzzles": [
@@ -4536,9 +4556,12 @@
             "Rf2+",
             "Kc3",
             "Qc1+",
-            "Kd4"
+            "Qc2",
+            "Qxc2+",
+            "Kd4",
+            "Rd2#"
           ],
-          "continuation_str": "Qf1+ Kd2 Rf2+ Kc3 Qc1+ Kd4",
+          "continuation_str": "Qf1+ Kd2 Rf2+ Kc3 Qc1+ Qc2 Qxc2+ Kd4 Rd2#",
           "eval_before": "+M5",
           "eval_after_played": "+0.00",
           "eval_drop_cp": 9995,
@@ -4644,9 +4667,10 @@
             "Qg7+",
             "Kh5",
             "Qxh7+",
-            "Kg4"
+            "Kg4",
+            "Qh3#"
           ],
-          "continuation_str": "Qg8+ Kh6 Qg7+ Kh5 Qxh7+ Kg4",
+          "continuation_str": "Qg8+ Kh6 Qg7+ Kh5 Qxh7+ Kg4 Qh3#",
           "eval_before": "+M4",
           "eval_after_played": "+10.66",
           "eval_drop_cp": 8930,
@@ -4866,9 +4890,16 @@
             "Qa3",
             "Rxg2+",
             "Kxg2",
-            "Be4+"
+            "Na5",
+            "Qxa5",
+            "Be4+",
+            "Kh2",
+            "Bxc6",
+            "bxc6",
+            "Rd2",
+            "Qa8#"
           ],
-          "continuation_str": "axb5 Rxh2 Qa3 Rxg2+ Kxg2 Be4+",
+          "continuation_str": "axb5 Rxh2 Qa3 Rxg2+ Kxg2 Na5 Qxa5 Be4+ Kh2 Bxc6 bxc6 Rd2 Qa8#",
           "eval_before": "+13.89",
           "eval_after_played": "+8.36",
           "eval_drop_cp": 553,
@@ -5270,9 +5301,18 @@
             "Qd4+",
             "Ke2",
             "Re5+",
-            "Kf3"
+            "Kf3",
+            "Qd3+",
+            "Kg2",
+            "Qxc2+",
+            "Kf3",
+            "Qd3+",
+            "Kf2",
+            "Re2+",
+            "Kf1",
+            "Qd1#"
           ],
-          "continuation_str": "Qe4+ Kd2 Qd4+ Ke2 Re5+ Kf3",
+          "continuation_str": "Qe4+ Kd2 Qd4+ Ke2 Re5+ Kf3 Qd3+ Kg2 Qxc2+ Kf3 Qd3+ Kf2 Re2+ Kf1 Qd1#",
           "eval_before": "+M9",
           "eval_after_played": "+M7",
           "eval_drop_cp": -2,
@@ -5289,8 +5329,8 @@
     },
     {
       "id": "shohan-openings",
-      "title": "Shohan: Opening Punishments",
-      "subtitle": "Sharp opening oversights in Sicilian, French & Caro-Kann",
+      "title": "Opening Punishments",
+      "subtitle": "Punishing early mistakes in Sicilian, French, Caro-Kann",
       "icon": "\u26a1",
       "badge": "31 Puzzles",
       "puzzles": [
@@ -6446,8 +6486,8 @@
     },
     {
       "id": "shohan-defenses",
-      "title": "Shohan: Clutch Defenses",
-      "subtitle": "Critical saving moves & counter-attacking resources",
+      "title": "Clutch Defenses",
+      "subtitle": "Saving moves & counter-attacking resources",
       "icon": "\ud83d\udee1\ufe0f",
       "badge": "30 Puzzles",
       "puzzles": [
@@ -7564,10 +7604,10 @@
     },
     {
       "id": "world-champions",
-      "title": "Immortal Grandmaster Classics",
-      "subtitle": "Legendary tactical combinations from Morphy, Fischer, Tal & Kasparov",
+      "title": "Immortal Grandmasters",
+      "subtitle": "Morphy, Fischer, Kasparov, Tal, Anderssen",
       "icon": "\ud83c\udfc6",
-      "badge": "7 Immortal Games",
+      "badge": "7 Masterpieces",
       "puzzles": [
         {
           "id": "classic-001",
@@ -7663,9 +7703,10 @@
             "Bf5+",
             "Ke8",
             "Bd7+",
-            "Kf8"
+            "Kd8",
+            "fxe7#"
           ],
-          "continuation_str": "Qxd7+ Kxd7 Bf5+ Ke8 Bd7+ Kf8",
+          "continuation_str": "Qxd7+ Kxd7 Bf5+ Ke8 Bd7+ Kd8 fxe7#",
           "eval_before": "+M2",
           "eval_after_played": "+0.00",
           "eval_drop_cp": 650,
@@ -7948,9 +7989,12 @@
         "Rf2+",
         "Kc3",
         "Qc1+",
-        "Kd4"
+        "Qc2",
+        "Qxc2+",
+        "Kd4",
+        "Rd2#"
       ],
-      "continuation_str": "Qf1+ Kd2 Rf2+ Kc3 Qc1+ Kd4",
+      "continuation_str": "Qf1+ Kd2 Rf2+ Kc3 Qc1+ Qc2 Qxc2+ Kd4 Rd2#",
       "eval_before": "+M5",
       "eval_after_played": "+0.00",
       "eval_drop_cp": 9995,
@@ -8056,9 +8100,10 @@
         "Qg7+",
         "Kh5",
         "Qxh7+",
-        "Kg4"
+        "Kg4",
+        "Qh3#"
       ],
-      "continuation_str": "Qg8+ Kh6 Qg7+ Kh5 Qxh7+ Kg4",
+      "continuation_str": "Qg8+ Kh6 Qg7+ Kh5 Qxh7+ Kg4 Qh3#",
       "eval_before": "+M4",
       "eval_after_played": "+10.66",
       "eval_drop_cp": 8930,
@@ -9392,9 +9437,16 @@
         "Qa3",
         "Rxg2+",
         "Kxg2",
-        "Be4+"
+        "Na5",
+        "Qxa5",
+        "Be4+",
+        "Kh2",
+        "Bxc6",
+        "bxc6",
+        "Rd2",
+        "Qa8#"
       ],
-      "continuation_str": "axb5 Rxh2 Qa3 Rxg2+ Kxg2 Be4+",
+      "continuation_str": "axb5 Rxh2 Qa3 Rxg2+ Kxg2 Na5 Qxa5 Be4+ Kh2 Bxc6 bxc6 Rd2 Qa8#",
       "eval_before": "+13.89",
       "eval_after_played": "+8.36",
       "eval_drop_cp": 553,
@@ -12239,9 +12291,18 @@
         "Qd4+",
         "Ke2",
         "Re5+",
-        "Kf3"
+        "Kf3",
+        "Qd3+",
+        "Kg2",
+        "Qxc2+",
+        "Kf3",
+        "Qd3+",
+        "Kf2",
+        "Re2+",
+        "Kf1",
+        "Qd1#"
       ],
-      "continuation_str": "Qe4+ Kd2 Qd4+ Ke2 Re5+ Kf3",
+      "continuation_str": "Qe4+ Kd2 Qd4+ Ke2 Re5+ Kf3 Qd3+ Kg2 Qxc2+ Kf3 Qd3+ Kf2 Re2+ Kf1 Qd1#",
       "eval_before": "+M9",
       "eval_after_played": "+M7",
       "eval_drop_cp": -2,

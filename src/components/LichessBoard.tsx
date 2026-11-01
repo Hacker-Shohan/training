@@ -104,8 +104,11 @@ export const LichessBoard: React.FC<LichessBoardProps> = ({
   }, [fen, orientation, turnColor, dests, lastMove, shapes, viewOnly, revision]);
 
   return (
-    <div className={`relative w-full aspect-square rounded-xl overflow-hidden shadow-2xl border-2 border-[#33302b] bg-[#b58863] ${className}`}>
-      <div ref={containerRef} className="w-full h-full is2d" />
+    <div
+      className={`relative w-full aspect-square rounded-xl overflow-hidden shadow-2xl border-2 border-[#33302b] bg-[#b58863] select-none ${className}`}
+      style={{ touchAction: 'none' }}
+    >
+      <div ref={containerRef} className="w-full h-full is2d" style={{ touchAction: 'none' }} />
     </div>
   );
 };

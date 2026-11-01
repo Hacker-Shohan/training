@@ -35,18 +35,74 @@ interface DatabasePayload {
 }
 
 const db = defaultPuzzlesData as unknown as DatabasePayload;
-const allSets: PuzzleSet[] = (db.sets && db.sets.length > 0)
-  ? db.sets
-  : [
-      {
-        id: 'shohan-master',
-        title: 'Shohan: Master Blunders',
-        subtitle: '120 critical tactical misses (~2280 Rapid)',
-        icon: '🎯',
-        badge: '120 Puzzles',
-        puzzles: db.puzzles || [],
-      },
-    ];
+const allSets: PuzzleSet[] =
+  db.sets && db.sets.length > 0
+    ? db.sets
+    : [
+        {
+          id: 'shohan-master',
+          title: 'Healthy Mix',
+          subtitle: 'Balanced tactical collection (120 Missed Blows)',
+          icon: '🔀',
+          badge: '120 Puzzles',
+          puzzles: db.puzzles || [],
+        },
+      ];
+
+// Group sets by player/database
+interface PlayerDatabase {
+  id: string;
+  name: string;
+  rating: string;
+  icon: string;
+  tag: string;
+  description: string;
+  available: boolean;
+  setIds: string[];
+}
+
+const databases: PlayerDatabase[] = [
+  {
+    id: 'shohan',
+    name: 'ShohanTheRock',
+    rating: '~2280 Rapid',
+    icon: '♟️',
+    tag: '1,522 Games',
+    description: 'Personal tactical oversights, knockout attacks & opening blunders.',
+    available: true,
+    setIds: ['shohan-master', 'shohan-mates', 'shohan-openings', 'shohan-defenses'],
+  },
+  {
+    id: 'grandmasters',
+    name: 'Immortal Grandmasters',
+    rating: '2600 - 2850 Elo',
+    icon: '🏆',
+    tag: 'World Champions',
+    description: 'Immortal historical combinations from Morphy, Fischer, Kasparov & Tal.',
+    available: true,
+    setIds: ['world-champions'],
+  },
+  {
+    id: 'player2',
+    name: 'Player 2',
+    rating: 'Custom PGN',
+    icon: '👤',
+    tag: 'Coming Soon',
+    description: 'Slot reserved for next player database upload.',
+    available: false,
+    setIds: [],
+  },
+  {
+    id: 'player3',
+    name: 'Player 3',
+    rating: 'Custom PGN',
+    icon: '👤',
+    tag: 'Coming Soon',
+    description: 'Slot reserved for next player database upload.',
+    available: false,
+    setIds: [],
+  },
+];
 
 const initialSet = allSets[0];
 const initialPuzzle = initialSet.puzzles[0];
@@ -56,7 +112,7 @@ export const TrainingApp: React.FC = () => {
   const [engineLoading, setEngineLoading] = useState<boolean>(true);
   const [engineProgress, setEngineProgress] = useState<number>(15);
 
-  // Active Puzzle Set selection
+  // Active Database & Set Selection
   const [currentSetId, setCurrentSetId] = useState<string>(() => {
     try {
       const saved = localStorage.getItem('thetrainer_active_set');
@@ -64,13 +120,27 @@ export const TrainingApp: React.FC = () => {
     } catch {}
     return initialSet.id;
   });
-  const [isSetMenuOpen, setIsSetMenuOpen] = useState<boolean>(false);
+
+  // Database Picker Modal State (Open on first visit)
+  const [isDbModalOpen, setIsDbModalOpen] = useState<boolean>(() => {
+    try {
+      return !localStorage.getItem('thetrainer_onboarded');
+    } catch {
+      return false;
+    }
+  });
+  const [selectedPlayerForSubmenu, setSelectedPlayerForSubmenu] = useState<string | null>('shohan');
 
   const currentSet = useMemo(() => {
     return allSets.find((s) => s.id === currentSetId) || allSets[0];
   }, [currentSetId]);
 
   const allPuzzles = currentSet.puzzles;
+
+  // Active Player Info
+  const activePlayer = useMemo(() => {
+    return databases.find((d) => d.setIds.includes(currentSetId)) || databases[0];
+  }, [currentSetId]);
 
   // Solved IDs from localStorage
   const [solvedIds, setSolvedIds] = useState<Set<string>>(() => {
@@ -205,9 +275,10 @@ export const TrainingApp: React.FC = () => {
     setColorFilter('all');
     setStatusFilter('all');
     setSearchQuery('');
-    setIsSetMenuOpen(false);
+    setIsDbModalOpen(false);
     try {
       localStorage.setItem('thetrainer_active_set', setId);
+      localStorage.setItem('thetrainer_onboarded', 'true');
     } catch {}
   }, []);
 
@@ -235,7 +306,6 @@ export const TrainingApp: React.FC = () => {
           subtitle: `Find the best move for ${puzzle.turn}!`,
         });
 
-        // Trigger browser engine evaluation if enabled
         if (engineEnabled) {
           browserEngine.evaluate(newChess.fen(), 12, (ev) => {
             setLiveEval(ev);
@@ -281,10 +351,13 @@ export const TrainingApp: React.FC = () => {
       return next;
     });
 
+    const isMate = currentPuzzle.eval_before.includes('M') || currentPuzzle.primary_theme.includes('Mate');
     setStatusText({
       type: 'solved',
-      title: 'Puzzle Solved!',
-      subtitle: `Victory! Decisive advantage achieved (${currentPuzzle.eval_before}).`,
+      title: isMate ? 'Checkmate Delivered!' : 'Puzzle Solved!',
+      subtitle: isMate
+        ? 'Victory! Forced mating sequence completed to checkmate.'
+        : `Victory! Decisive advantage achieved (${currentPuzzle.eval_before}).`,
     });
   }, [currentPuzzle]);
 
@@ -363,6 +436,7 @@ export const TrainingApp: React.FC = () => {
           },
         ]);
 
+        // Calculate the last user ply index
         const lastUserPly =
           continuation.length > 0
             ? continuation.length % 2 === 0
@@ -370,7 +444,8 @@ export const TrainingApp: React.FC = () => {
               : continuation.length - 1
             : 0;
 
-        if (tempChess.isGameOver() || currentPly >= lastUserPly) {
+        // Check if game is over (Checkmate delivered) or conclusion reached
+        if (tempChess.isGameOver() || tempChess.isCheckmate() || currentPly >= lastUserPly) {
           onPuzzleComplete();
           return;
         }
@@ -405,7 +480,7 @@ export const TrainingApp: React.FC = () => {
                 setDests(toDests(oppChess));
                 setViewOnly(false);
 
-                if (oppChess.isGameOver()) {
+                if (oppChess.isGameOver() || oppChess.isCheckmate()) {
                   onPuzzleComplete();
                   return;
                 }
@@ -608,19 +683,6 @@ export const TrainingApp: React.FC = () => {
     setSoundEnabled(next);
   }, []);
 
-  const handleEngineToggle = useCallback(() => {
-    setEngineEnabled((prev) => {
-      const next = !prev;
-      if (!next) {
-        browserEngine.stop();
-        setLiveEval(null);
-      } else {
-        browserEngine.evaluate(boardFen, 12, (ev) => setLiveEval(ev));
-      }
-      return next;
-    });
-  }, [boardFen]);
-
   // Keyboard navigation
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -675,13 +737,13 @@ export const TrainingApp: React.FC = () => {
     <div className="min-h-screen bg-[#161512] text-[#bababa] font-sans antialiased flex flex-col selection:bg-amber-500 selection:text-black">
       {/* Engine Loading Screen */}
       {engineLoading && (
-        <div className="fixed inset-0 bg-[#161512] z-50 flex flex-col items-center justify-center space-y-4">
+        <div className="fixed inset-0 bg-[#161512] z-50 flex flex-col items-center justify-center space-y-4 px-4 text-center">
           <div className="w-14 h-14 rounded-2xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-3xl animate-bounce">
             ♟
           </div>
-          <h2 className="text-xl font-black text-white tracking-wide">TheTrainer</h2>
-          <p className="text-xs text-[#888]">Loading Stockfish Engine (WASM)...</p>
-          <div className="w-56 h-1.5 bg-[#2d2b25] rounded-full overflow-hidden">
+          <h2 className="text-xl sm:text-2xl font-black text-white tracking-wide">TheTrainer</h2>
+          <p className="text-xs text-[#888]">Loading Stockfish WASM Engine...</p>
+          <div className="w-48 sm:w-56 h-1.5 bg-[#2d2b25] rounded-full overflow-hidden">
             <div
               className="h-full bg-amber-500 transition-all duration-300"
               style={{ width: `${engineProgress}%` }}
@@ -690,100 +752,50 @@ export const TrainingApp: React.FC = () => {
         </div>
       )}
 
-      {/* Top Navbar */}
-      <header className="bg-[#1e1c18] border-b border-[#2d2b25] px-4 py-2.5 flex items-center justify-between sticky top-0 z-40 shadow-md">
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-amber-400 to-amber-600 flex items-center justify-center font-black text-black text-lg shadow-sm">
+      {/* Top Navbar - Mobile Optimized */}
+      <header className="bg-[#1e1c18] border-b border-[#2d2b25] px-2.5 sm:px-4 py-2 sm:py-2.5 flex items-center justify-between sticky top-0 z-40 shadow-md">
+        <div className="flex items-center gap-1.5 sm:gap-3">
+          <div className="flex items-center gap-1.5">
+            <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg bg-gradient-to-br from-amber-400 to-amber-600 flex items-center justify-center font-black text-black text-base sm:text-lg shadow-sm shrink-0">
               ♞
             </div>
             <div>
-              <h1 className="text-sm font-extrabold text-white tracking-wide leading-none">
+              <h1 className="text-xs sm:text-sm font-extrabold text-white tracking-wide leading-none">
                 TheTrainer
               </h1>
-              <span className="text-[10px] text-amber-400/90 font-mono leading-none">
+              <span className="hidden sm:inline text-[9px] text-amber-400/90 font-mono leading-none">
                 Tactical Engine Lab
               </span>
             </div>
           </div>
 
-          {/* Puzzle Set Selector Dropdown */}
-          <div className="relative ml-2">
-            <button
-              onClick={() => setIsSetMenuOpen((prev) => !prev)}
-              className="flex items-center gap-2 bg-[#262420] hover:bg-[#322f2a] text-white px-3 py-1.5 rounded-xl border border-[#3d3a33] text-xs font-semibold shadow-sm transition active:scale-95"
-              title="Switch Puzzle Set / Collection"
-            >
-              <span className="text-sm">{currentSet.icon}</span>
-              <span className="font-bold hidden sm:inline">{currentSet.title}</span>
-              <span className="sm:hidden font-bold">{currentSet.title.split(':')[0]}</span>
-              <span className="text-[10px] bg-amber-500/20 text-amber-300 px-1.5 py-0.5 rounded font-mono border border-amber-500/30">
-                {currentSet.puzzles.length}
-              </span>
-              <span className="text-[#888] text-[9px]">▼</span>
-            </button>
-
-            {isSetMenuOpen && (
-              <>
-                <div
-                  className="fixed inset-0 z-40"
-                  onClick={() => setIsSetMenuOpen(false)}
-                />
-                <div className="absolute left-0 mt-2 w-80 bg-[#1e1c18] border border-[#3d3a33] rounded-2xl shadow-2xl p-2 z-50 space-y-1 animate-fadeIn">
-                  <div className="px-3 py-2 text-[10px] font-bold text-[#888] uppercase tracking-wider border-b border-[#2d2b25]">
-                    Select Puzzle Set
-                  </div>
-                  {allSets.map((s) => {
-                    const isSelected = s.id === currentSetId;
-                    const solvedInThisSet = s.puzzles.filter((p) => solvedIds.has(p.id)).length;
-                    return (
-                      <button
-                        key={s.id}
-                        onClick={() => handleSelectSet(s.id)}
-                        className={`w-full text-left p-2.5 rounded-xl transition flex items-center justify-between ${
-                          isSelected
-                            ? 'bg-[#2b2720] border border-amber-500/50 text-white'
-                            : 'hover:bg-[#262420] text-[#ccc] border border-transparent'
-                        }`}
-                      >
-                        <div className="flex items-center gap-2.5 overflow-hidden">
-                          <span className="text-xl shrink-0">{s.icon}</span>
-                          <div className="truncate">
-                            <div className="font-bold text-xs text-white truncate">
-                              {s.title}
-                            </div>
-                            <div className="text-[10px] text-[#888] truncate">
-                              {s.subtitle}
-                            </div>
-                          </div>
-                        </div>
-                        <div className="text-right shrink-0 ml-2 font-mono text-[10px]">
-                          <span className="text-amber-400 font-bold block">
-                            {s.puzzles.length}
-                          </span>
-                          <span className="text-[#7e7b73]">
-                            {solvedInThisSet} solved
-                          </span>
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
-              </>
-            )}
-          </div>
+          {/* Database & Set Switcher Button */}
+          <button
+            onClick={() => setIsDbModalOpen(true)}
+            className="flex items-center gap-1 sm:gap-2 bg-[#262420] hover:bg-[#322f2a] text-white px-2 sm:px-3 py-1.5 rounded-xl border border-[#3d3a33] text-[11px] sm:text-xs font-semibold shadow-sm transition active:scale-95"
+            title="Switch Player Database or Training Collection"
+          >
+            <span className="text-xs sm:text-sm">{activePlayer.icon}</span>
+            <span className="font-bold hidden md:inline">{activePlayer.name}:</span>
+            <span className="font-bold text-amber-300 truncate max-w-[110px] sm:max-w-none">
+              {currentSet.title}
+            </span>
+            <span className="text-[9px] sm:text-[10px] bg-amber-500/20 text-amber-300 px-1 py-0.5 rounded font-mono border border-amber-500/30">
+              {currentSet.puzzles.length}
+            </span>
+            <span className="text-[#888] text-[8px] sm:text-[9px]">▼</span>
+          </button>
         </div>
 
         {/* Header Stats & Controls */}
-        <div className="flex items-center gap-2 text-xs">
-          <div className="hidden sm:flex items-center gap-1.5 bg-[#161512] border border-[#2d2b25] px-2.5 py-1 rounded-lg">
+        <div className="flex items-center gap-1.5 sm:gap-2 text-xs">
+          <div className="hidden lg:flex items-center gap-1.5 bg-[#161512] border border-[#2d2b25] px-2.5 py-1 rounded-lg">
             <span className="text-emerald-400 font-bold">{solvedCountInActiveSet}</span>
-            <span className="text-[#7e7b73]">/ {allPuzzles.length} in Set</span>
+            <span className="text-[#7e7b73]">/ {allPuzzles.length}</span>
           </div>
 
-          <div className="flex items-center gap-1.5 bg-[#161512] border border-[#2d2b25] px-2.5 py-1 rounded-lg">
+          <div className="flex items-center gap-1 bg-[#161512] border border-[#2d2b25] px-2 py-1 rounded-lg text-xs">
             <span className="text-rose-400 font-bold">🔥 {streak}</span>
-            <span className="hidden sm:inline text-[#7e7b73]">Streak</span>
           </div>
 
           <button
@@ -796,7 +808,7 @@ export const TrainingApp: React.FC = () => {
 
           <button
             onClick={handleRandom}
-            className="p-1.5 rounded-lg bg-[#262420] hover:bg-[#322f2a] text-white border border-[#38352e] transition"
+            className="hidden sm:inline-block p-1.5 rounded-lg bg-[#262420] hover:bg-[#322f2a] text-white border border-[#38352e] transition"
             title="Random Puzzle"
           >
             🎲
@@ -804,37 +816,40 @@ export const TrainingApp: React.FC = () => {
 
           <button
             onClick={() => setIsDrawerOpen(true)}
-            className="px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-black font-bold transition shadow-sm flex items-center gap-1.5 text-xs"
+            className="px-2.5 sm:px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-black font-bold transition shadow-sm flex items-center gap-1 text-[11px] sm:text-xs"
           >
             <span>☰</span>
-            <span className="hidden sm:inline">Browse ({filteredPuzzles.length})</span>
+            <span className="hidden sm:inline">Browse</span>
           </button>
         </div>
       </header>
 
-      {/* Main Content Arena */}
-      <main className="flex-1 max-w-6xl w-full mx-auto p-3 md:p-6 grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+      {/* Main Content Arena - 100% Mobile Friendly */}
+      <main className="flex-1 max-w-6xl w-full mx-auto p-2 sm:p-4 md:p-6 grid grid-cols-1 lg:grid-cols-12 gap-4 lg:gap-6 items-start">
         {/* Left Side: Board & Eval Bar */}
-        <div className="lg:col-span-7 flex flex-col items-center">
-          <div className="w-full max-w-[530px] space-y-3">
-            {/* Opponent Header */}
-            <div className="bg-[#1e1c18] border border-[#2d2b25] rounded-xl px-3.5 py-2 flex items-center justify-between text-xs">
-              <div className="flex items-center gap-2 truncate">
+        <div className="lg:col-span-7 flex flex-col items-center w-full">
+          <div className="w-full max-w-[490px] space-y-2 sm:space-y-3">
+            {/* Opponent Top Bar */}
+            <div className="bg-[#1e1c18] border border-[#2d2b25] rounded-xl px-2.5 sm:px-3.5 py-1.5 sm:py-2 flex items-center justify-between text-xs">
+              <div className="flex items-center gap-1.5 sm:gap-2 truncate">
                 <span
-                  className={`w-2.5 h-2.5 rounded-full ${
+                  className={`w-2 h-2 sm:w-2.5 sm:h-2.5 rounded-full shrink-0 ${
                     currentPuzzle.player_color === 'white' ? 'bg-black border border-white' : 'bg-white'
                   }`}
                 />
-                <span className="text-white font-semibold truncate">
+                <span className="text-white font-semibold truncate text-[11px] sm:text-xs">
                   vs {currentPuzzle.opponent}
                 </span>
-                <span className="text-[#888] font-mono">({currentPuzzle.opponent_rating})</span>
+                <span className="text-[#888] font-mono text-[10px] sm:text-xs">
+                  ({currentPuzzle.opponent_rating})
+                </span>
               </div>
 
-              <div className="flex items-center gap-2">
+              {/* Clean evaluation badge - NO depth clutter */}
+              <div className="flex items-center gap-1.5">
                 {engineEnabled && liveEval && (
-                  <span className="font-mono text-[11px] text-emerald-400 bg-emerald-950/60 border border-emerald-500/30 px-1.5 py-0.5 rounded">
-                    Depth {liveEval.depth}: {liveEval.score}
+                  <span className="font-mono text-[11px] font-bold text-emerald-400 bg-emerald-950/60 border border-emerald-500/30 px-2 py-0.5 rounded">
+                    {liveEval.score}
                   </span>
                 )}
                 {currentPuzzle.game_url && (
@@ -842,23 +857,23 @@ export const TrainingApp: React.FC = () => {
                     href={currentPuzzle.game_url}
                     target="_blank"
                     rel="noreferrer"
-                    className="text-amber-400 hover:text-amber-300 underline font-mono text-[11px] shrink-0"
+                    className="text-amber-400 hover:text-amber-300 underline font-mono text-[10px] shrink-0"
                   >
-                    Source ↗
+                    Game ↗
                   </a>
                 )}
               </div>
             </div>
 
-            {/* Board Container with Eval Bar */}
-            <div className="flex gap-2.5 items-stretch justify-center">
+            {/* Board Container with Mobile-scaled Eval Bar */}
+            <div className="flex gap-1.5 sm:gap-2.5 items-stretch justify-center w-full">
               <EvalBar
                 scoreText={engineEnabled && liveEval ? liveEval.score : currentPuzzle.eval_before}
                 orientation={orientation}
                 className="shrink-0"
               />
 
-              <div className="flex-1 max-w-[490px]">
+              <div className="flex-1 w-full max-w-[460px]">
                 <LichessBoard
                   fen={boardFen}
                   orientation={orientation}
@@ -874,31 +889,47 @@ export const TrainingApp: React.FC = () => {
             </div>
 
             {/* Player Bottom Bar */}
-            <div className="bg-[#1e1c18] border border-[#2d2b25] rounded-xl px-3.5 py-2 flex items-center justify-between text-xs">
-              <div className="flex items-center gap-2">
+            <div className="bg-[#1e1c18] border border-[#2d2b25] rounded-xl px-2.5 sm:px-3.5 py-1.5 sm:py-2 flex items-center justify-between text-xs">
+              <div className="flex items-center gap-1.5 sm:gap-2">
                 <span
-                  className={`w-2.5 h-2.5 rounded-full ${
+                  className={`w-2 h-2 sm:w-2.5 sm:h-2.5 rounded-full shrink-0 ${
                     currentPuzzle.player_color === 'white' ? 'bg-white' : 'bg-black border border-white'
                   }`}
                 />
-                <span className="text-white font-semibold">
-                  {currentSetId === 'world-champions' ? (currentPuzzle.id === 'classic-001' ? 'Paul Morphy' : currentPuzzle.id === 'classic-002' ? 'Edward Lasker' : currentPuzzle.id === 'classic-003' ? 'Adolf Anderssen' : currentPuzzle.id === 'classic-004' ? 'Frank Marshall' : currentPuzzle.id === 'classic-005' ? 'Bobby Fischer' : currentPuzzle.id === 'classic-006' ? 'Garry Kasparov' : 'Mikhail Botvinnik') : 'ShohanTheRock'}
+                <span className="text-white font-semibold text-[11px] sm:text-xs">
+                  {currentSetId === 'world-champions'
+                    ? (currentPuzzle.id === 'classic-001'
+                        ? 'Paul Morphy'
+                        : currentPuzzle.id === 'classic-002'
+                        ? 'Edward Lasker'
+                        : currentPuzzle.id === 'classic-003'
+                        ? 'Adolf Anderssen'
+                        : currentPuzzle.id === 'classic-004'
+                        ? 'Frank Marshall'
+                        : currentPuzzle.id === 'classic-005'
+                        ? 'Bobby Fischer'
+                        : currentPuzzle.id === 'classic-006'
+                        ? 'Mikhail Tal'
+                        : currentPuzzle.id === 'classic-007'
+                        ? 'Garry Kasparov'
+                        : 'Mikhail Botvinnik')
+                    : 'ShohanTheRock'}
                 </span>
-                <span className="text-amber-400 font-mono font-medium">
+                <span className="text-amber-400 font-mono text-[10px] sm:text-xs font-medium">
                   ({currentPuzzle.player_rating || 2280})
                 </span>
               </div>
-              <span className="text-[#7e7b73] font-mono text-[11px]">
+              <span className="text-[#7e7b73] font-mono text-[10px] sm:text-[11px]">
                 Move {currentPuzzle.move_number}
               </span>
             </div>
 
-            {/* Tactical Controls */}
-            <div className="grid grid-cols-4 gap-2 pt-1">
+            {/* Tactical Controls - Mobile Touch Friendly */}
+            <div className="grid grid-cols-4 gap-1.5 sm:gap-2 pt-1">
               <button
                 onClick={handlePrev}
                 disabled={filteredIndex === 0}
-                className="bg-[#24221d] hover:bg-[#2e2b25] disabled:opacity-30 disabled:cursor-not-allowed text-white text-xs font-semibold py-2.5 rounded-xl border border-[#38352e] transition active:scale-95 flex items-center justify-center gap-1"
+                className="bg-[#24221d] hover:bg-[#2e2b25] disabled:opacity-30 disabled:cursor-not-allowed text-white text-[11px] sm:text-xs font-semibold py-2.5 sm:py-3 rounded-xl border border-[#38352e] transition active:scale-95 flex items-center justify-center gap-1 min-h-[42px]"
                 title="Previous Puzzle"
               >
                 ◀ Prev
@@ -906,7 +937,7 @@ export const TrainingApp: React.FC = () => {
 
               <button
                 onClick={handleHint}
-                className="bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 text-xs font-semibold py-2.5 rounded-xl border border-amber-500/30 transition active:scale-95 flex items-center justify-center gap-1"
+                className="bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 text-[11px] sm:text-xs font-semibold py-2.5 sm:py-3 rounded-xl border border-amber-500/30 transition active:scale-95 flex items-center justify-center gap-1 min-h-[42px]"
                 title="Tactical Hint (H)"
               >
                 💡 Hint
@@ -914,16 +945,16 @@ export const TrainingApp: React.FC = () => {
 
               <button
                 onClick={handleShowGameBlunder}
-                className="bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 text-xs font-semibold py-2.5 rounded-xl border border-rose-500/30 transition active:scale-95 flex items-center justify-center gap-1"
+                className="bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 text-[11px] sm:text-xs font-semibold py-2.5 sm:py-3 rounded-xl border border-rose-500/30 transition active:scale-95 flex items-center justify-center gap-1 min-h-[42px]"
                 title="Show What Was Played in Game (B)"
               >
-                ⏪ Game Move
+                ⏪ Game
               </button>
 
               <button
                 onClick={handleNext}
                 disabled={filteredIndex >= filteredPuzzles.length - 1}
-                className="bg-emerald-600 hover:bg-emerald-500 disabled:opacity-30 disabled:cursor-not-allowed text-white text-xs font-bold py-2.5 rounded-xl shadow-lg shadow-emerald-700/20 transition active:scale-95 flex items-center justify-center gap-1"
+                className="bg-emerald-600 hover:bg-emerald-500 disabled:opacity-30 disabled:cursor-not-allowed text-white text-[11px] sm:text-xs font-bold py-2.5 sm:py-3 rounded-xl shadow-lg shadow-emerald-700/20 transition active:scale-95 flex items-center justify-center gap-1 min-h-[42px]"
                 title="Next Puzzle"
               >
                 Next ▶
@@ -931,7 +962,7 @@ export const TrainingApp: React.FC = () => {
             </div>
 
             {/* Secondary actions */}
-            <div className="flex items-center justify-between text-xs px-1 text-[#7e7b73]">
+            <div className="flex items-center justify-between text-[11px] sm:text-xs px-1 text-[#7e7b73]">
               <button
                 onClick={handleAutoPlaySolution}
                 className="hover:text-amber-400 underline transition flex items-center gap-1"
@@ -953,40 +984,40 @@ export const TrainingApp: React.FC = () => {
                 className="hover:text-white transition flex items-center gap-1"
                 title="Flip Board (F)"
               >
-                🔄 Flip Board
+                🔄 Flip
               </button>
             </div>
           </div>
         </div>
 
-        {/* Right Side: Authentic Lichess Puzzle Status & Notation */}
-        <div className="lg:col-span-5 space-y-4">
-          <div className="bg-[#1e1c18] border border-[#2d2b25] rounded-2xl p-5 shadow-xl space-y-4">
+        {/* Right Side: Authentic Lichess Status & Notation */}
+        <div className="lg:col-span-5 space-y-3 sm:space-y-4 w-full">
+          <div className="bg-[#1e1c18] border border-[#2d2b25] rounded-2xl p-3.5 sm:p-5 shadow-xl space-y-3 sm:space-y-4">
             {/* Header info */}
-            <div className="flex items-center justify-between border-b border-[#2d2b25] pb-3">
+            <div className="flex items-center justify-between border-b border-[#2d2b25] pb-2.5">
               <div>
-                <h2 className="text-base font-bold text-white tracking-wide">
+                <h2 className="text-sm sm:text-base font-bold text-white tracking-wide">
                   Puzzle #{filteredIndex + 1}
                 </h2>
-                <p className="text-xs text-[#888]">
+                <p className="text-[11px] text-[#888] truncate max-w-[200px] sm:max-w-none">
                   {currentPuzzle.opening_name} ({currentPuzzle.opening_eco})
                 </p>
               </div>
               <div className="flex items-center gap-1.5">
                 {isCurrentSolved && (
-                  <span className="text-xs bg-emerald-500/20 text-emerald-400 px-2 py-0.5 rounded font-bold border border-emerald-500/30">
+                  <span className="text-[10px] sm:text-xs bg-emerald-500/20 text-emerald-400 px-2 py-0.5 rounded font-bold border border-emerald-500/30">
                     ✓ Solved
                   </span>
                 )}
-                <span className="text-xs bg-amber-500/10 text-amber-400 px-2 py-0.5 rounded font-mono border border-amber-500/20">
+                <span className="text-[10px] sm:text-xs bg-amber-500/10 text-amber-400 px-2 py-0.5 rounded font-mono border border-amber-500/20">
                   {currentPuzzle.primary_theme}
                 </span>
               </div>
             </div>
 
-            {/* Big Lichess Status Banner */}
+            {/* Big Status Banner */}
             <div
-              className={`p-4 rounded-xl border text-center space-y-1 transition-all ${
+              className={`p-3 sm:p-4 rounded-xl border text-center space-y-1 transition-all ${
                 statusText.type === 'solved'
                   ? 'bg-emerald-950/80 border-emerald-500/60 text-emerald-200'
                   : statusText.type === 'blunder'
@@ -1000,34 +1031,34 @@ export const TrainingApp: React.FC = () => {
                   : 'bg-[#141310] border-[#2d2b25] text-white'
               }`}
             >
-              <div className="text-base font-bold tracking-wide">{statusText.title}</div>
+              <div className="text-sm sm:text-base font-bold tracking-wide">{statusText.title}</div>
               {statusText.subtitle && (
-                <div className="text-xs text-[#999] leading-snug">{statusText.subtitle}</div>
+                <div className="text-[11px] sm:text-xs text-[#999] leading-snug">{statusText.subtitle}</div>
               )}
             </div>
 
-            {/* Lichess Move History Notation (Only moves played so far!) */}
-            <div className="bg-[#141310] border border-[#2d2b25] rounded-xl p-3 min-h-[140px] flex flex-col justify-between">
-              <div className="text-[11px] text-[#7e7b73] uppercase font-semibold tracking-wider flex justify-between border-b border-[#2d2b25] pb-2 mb-2">
-                <span>Move Notation</span>
+            {/* Lichess Move History Notation */}
+            <div className="bg-[#141310] border border-[#2d2b25] rounded-xl p-3 min-h-[110px] flex flex-col justify-between">
+              <div className="text-[10px] sm:text-[11px] text-[#7e7b73] uppercase font-semibold tracking-wider flex justify-between border-b border-[#2d2b25] pb-2 mb-2">
+                <span>Played Line</span>
                 <span className="font-mono text-emerald-400 text-[10px]">
-                  {isCompleted ? 'Clear Conclusion Reached' : `${playedMoves.length} moves played`}
+                  {isCompleted ? 'Line Complete' : `${playedMoves.length} moves`}
                 </span>
               </div>
 
               <div className="font-mono text-xs flex-1">
                 {playedMoves.length === 0 ? (
-                  <div className="text-[#555] italic text-center py-6">
+                  <div className="text-[#555] italic text-center py-4 text-xs">
                     Play the winning move on the board...
                   </div>
                 ) : (
-                  <div className="flex flex-wrap gap-2 text-xs">
+                  <div className="flex flex-wrap gap-1.5 sm:gap-2 text-[11px] sm:text-xs">
                     {playedMoves.map((m, idx) => {
                       const isUser = idx % 2 === 0;
                       return (
                         <span
                           key={idx}
-                          className={`px-2 py-1 rounded ${
+                          className={`px-2 py-0.5 sm:py-1 rounded ${
                             isUser
                               ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
                               : 'bg-slate-800 text-slate-300 border border-slate-700'
@@ -1042,28 +1073,28 @@ export const TrainingApp: React.FC = () => {
               </div>
             </div>
 
-            {/* Post-Puzzle Analysis (Unlocked only after completion!) */}
+            {/* Post-Puzzle Analysis */}
             {isCompleted && (
-              <div className="bg-[#141310] border border-emerald-500/30 rounded-xl p-3.5 space-y-2 text-xs animate-fadeIn">
+              <div className="bg-[#141310] border border-emerald-500/30 rounded-xl p-3 sm:p-3.5 space-y-2 text-xs animate-fadeIn">
                 <div className="font-semibold text-emerald-400 flex items-center justify-between">
                   <span>🧠 Post-Game Analysis</span>
                   <span className="font-mono text-[10px] text-[#888]">
                     In game: {currentPuzzle.played_move_san} (-{(currentPuzzle.eval_drop_cp / 100).toFixed(1)})
                   </span>
                 </div>
-                <p className="text-slate-300 leading-relaxed">{currentPuzzle.explanation}</p>
+                <p className="text-slate-300 leading-relaxed text-[11px] sm:text-xs">{currentPuzzle.explanation}</p>
                 <div className="pt-2 border-t border-[#2d2b25] font-mono text-[11px] text-emerald-300">
-                  <span className="text-[#666] block font-sans text-[10px]">Full Continuation:</span>
+                  <span className="text-[#666] block font-sans text-[10px]">Full Winning Sequence:</span>
                   {currentPuzzle.continuation_str}
                 </div>
               </div>
             )}
 
-            {/* Quick Next Button When Solved */}
+            {/* Big Next Button When Solved */}
             {isCompleted && (
               <button
                 onClick={handleNext}
-                className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2.5 rounded-xl shadow-lg transition active:scale-95 text-xs flex items-center justify-center gap-1.5"
+                className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-3 rounded-xl shadow-lg transition active:scale-95 text-xs sm:text-sm flex items-center justify-center gap-1.5"
               >
                 <span>Next Puzzle</span>
                 <span>▶</span>
@@ -1071,7 +1102,7 @@ export const TrainingApp: React.FC = () => {
             )}
 
             {/* Keyboard Shortcuts */}
-            <div className="pt-1 flex items-center justify-between text-[11px] text-[#6b675e] border-t border-[#2d2b25]">
+            <div className="hidden sm:flex pt-1 items-center justify-between text-[11px] text-[#6b675e] border-t border-[#2d2b25]">
               <span>Shortcuts:</span>
               <div className="flex gap-2 font-mono">
                 <span>[Space] Next</span>
@@ -1081,53 +1112,137 @@ export const TrainingApp: React.FC = () => {
               </div>
             </div>
           </div>
-
-          {/* Quick Theme Filters */}
-          <div className="bg-[#1e1c18] border border-[#2d2b25] rounded-2xl p-4 shadow-xl space-y-2.5">
-            <h3 className="text-xs font-bold text-white uppercase tracking-wider">
-              Filter by Theme in Active Set
-            </h3>
-            <div className="flex flex-wrap gap-1.5 text-xs">
-              {[
-                { label: 'All', value: 'all' },
-                { label: '💥 Knockouts', value: 'Knockout' },
-                { label: '👑 Mates', value: 'Mate' },
-                { label: '🛡️ Defenses', value: 'Defense' },
-                { label: '🔱 Forks', value: 'Fork' },
-                { label: '📌 Pins', value: 'Pin' },
-                { label: '⚡ Discovered', value: 'Discovered' },
-              ].map((t) => (
-                <button
-                  key={t.value}
-                  onClick={() => {
-                    setThemeFilter(t.value);
-                    setFilteredIndex(0);
-                  }}
-                  className={`px-2.5 py-1 rounded-lg border text-xs transition ${
-                    themeFilter === t.value
-                      ? 'bg-amber-500 text-black font-bold border-amber-500'
-                      : 'bg-[#161512] text-[#888] border-[#2d2b25] hover:text-white hover:border-[#3d3a33]'
-                  }`}
-                >
-                  {t.label}
-                </button>
-              ))}
-            </div>
-          </div>
         </div>
       </main>
+
+      {/* DATABASE & PLAYER SELECTOR MODAL (User Onboarding & Switcher) */}
+      {isDbModalOpen && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-3 sm:p-4 animate-fadeIn">
+          <div className="bg-[#1e1c18] border border-[#3d3a33] w-full max-w-xl rounded-2xl shadow-2xl p-4 sm:p-6 space-y-5 max-h-[90vh] overflow-y-auto">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between border-b border-[#2d2b25] pb-3">
+              <div>
+                <h2 className="text-lg sm:text-xl font-black text-white flex items-center gap-2">
+                  <span>♟️</span> Select Training Database
+                </h2>
+                <p className="text-xs text-[#888]">
+                  Choose whose games and which tactical set to train on:
+                </p>
+              </div>
+              {localStorage.getItem('thetrainer_onboarded') && (
+                <button
+                  onClick={() => setIsDbModalOpen(false)}
+                  className="w-8 h-8 rounded-lg bg-[#262420] hover:bg-[#322f2a] text-white flex items-center justify-center border border-[#38352e]"
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+
+            {/* Step 1: Select Player / Database */}
+            <div className="space-y-2">
+              <label className="text-xs font-bold text-[#aaa] uppercase tracking-wider block">
+                1. Select Player Database
+              </label>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                {databases.map((dbItem) => {
+                  const isSelected = selectedPlayerForSubmenu === dbItem.id;
+                  return (
+                    <div
+                      key={dbItem.id}
+                      onClick={() => {
+                        if (dbItem.available) {
+                          setSelectedPlayerForSubmenu(dbItem.id);
+                          if (dbItem.id === 'grandmasters') {
+                            handleSelectSet('world-champions');
+                          }
+                        }
+                      }}
+                      className={`p-3 rounded-xl border transition cursor-pointer flex flex-col justify-between ${
+                        !dbItem.available
+                          ? 'opacity-40 bg-[#161512] border-[#2d2b25] cursor-not-allowed'
+                          : isSelected
+                          ? 'bg-[#2b2720] border-amber-500 shadow-md ring-1 ring-amber-500'
+                          : 'bg-[#181613] border-[#2d2b25] hover:border-[#444] hover:bg-[#201e19]'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between mb-1.5">
+                        <div className="flex items-center gap-2">
+                          <span className="text-2xl">{dbItem.icon}</span>
+                          <div>
+                            <div className="font-bold text-sm text-white">{dbItem.name}</div>
+                            <div className="text-[10px] text-amber-400 font-mono">{dbItem.rating}</div>
+                          </div>
+                        </div>
+                        <span
+                          className={`text-[9px] px-1.5 py-0.5 rounded font-mono ${
+                            dbItem.available
+                              ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                              : 'bg-zinc-800 text-zinc-400 border border-zinc-700'
+                          }`}
+                        >
+                          {dbItem.tag}
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-[#888] leading-snug">{dbItem.description}</p>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Step 2: If Shohan selected, choose Collection */}
+            {selectedPlayerForSubmenu === 'shohan' && (
+              <div className="space-y-2 pt-2 border-t border-[#2d2b25] animate-fadeIn">
+                <label className="text-xs font-bold text-[#aaa] uppercase tracking-wider block">
+                  2. Choose Training Collection
+                </label>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {allSets
+                    .filter((s) => s.id !== 'world-champions')
+                    .map((s) => {
+                      const isSelected = s.id === currentSetId;
+                      return (
+                        <button
+                          key={s.id}
+                          onClick={() => handleSelectSet(s.id)}
+                          className={`p-3 rounded-xl text-left border transition flex items-center justify-between ${
+                            isSelected
+                              ? 'bg-amber-500/20 border-amber-500 text-white shadow-sm'
+                              : 'bg-[#181613] border-[#2d2b25] hover:bg-[#262420] text-[#ccc]'
+                          }`}
+                        >
+                          <div className="flex items-center gap-2.5 overflow-hidden">
+                            <span className="text-xl shrink-0">{s.icon}</span>
+                            <div className="truncate">
+                              <div className="font-bold text-xs text-white truncate">{s.title}</div>
+                              <div className="text-[10px] text-[#888] truncate">{s.subtitle}</div>
+                            </div>
+                          </div>
+                          <span className="font-mono text-xs font-bold text-amber-400 ml-2 shrink-0">
+                            {s.puzzles.length}
+                          </span>
+                        </button>
+                      );
+                    })}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Drawer: Browse All Puzzles in Current Set */}
       {isDrawerOpen && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex justify-end">
-          <div className="w-full max-w-md bg-[#1e1c18] border-l border-[#2d2b25] h-full flex flex-col shadow-2xl p-5 space-y-4">
+          <div className="w-full max-w-sm sm:max-w-md bg-[#1e1c18] border-l border-[#2d2b25] h-full flex flex-col shadow-2xl p-4 sm:p-5 space-y-3 sm:space-y-4">
             <div className="flex items-center justify-between border-b border-[#2d2b25] pb-3">
               <div>
-                <h2 className="text-base font-bold text-white flex items-center gap-2">
+                <h2 className="text-sm sm:text-base font-bold text-white flex items-center gap-2">
                   <span>{currentSet.icon}</span> {currentSet.title}
                 </h2>
-                <span className="text-[11px] text-[#888]">
-                  {filteredPuzzles.length} available puzzles
+                <span className="text-[10px] sm:text-[11px] text-[#888]">
+                  {filteredPuzzles.length} available in set
                 </span>
               </div>
               <button
@@ -1138,20 +1253,20 @@ export const TrainingApp: React.FC = () => {
               </button>
             </div>
 
-            {/* Quick Set Tabs inside Drawer */}
+            {/* Quick Set Switcher Tabs inside Drawer */}
             <div className="flex gap-1.5 overflow-x-auto pb-1 text-xs">
               {allSets.map((s) => (
                 <button
                   key={s.id}
                   onClick={() => handleSelectSet(s.id)}
-                  className={`px-2.5 py-1 rounded-lg text-xs font-semibold shrink-0 transition flex items-center gap-1 ${
+                  className={`px-2 py-1 rounded-lg text-[11px] font-semibold shrink-0 transition flex items-center gap-1 ${
                     s.id === currentSetId
                       ? 'bg-amber-500 text-black font-bold'
                       : 'bg-[#161512] text-[#888] hover:text-white border border-[#2d2b25]'
                   }`}
                 >
                   <span>{s.icon}</span>
-                  <span>{s.title.split(':')[0]}</span>
+                  <span>{s.title}</span>
                 </button>
               ))}
             </div>
@@ -1169,7 +1284,7 @@ export const TrainingApp: React.FC = () => {
                 <select
                   value={colorFilter}
                   onChange={(e) => setColorFilter(e.target.value as 'all' | 'white' | 'black')}
-                  className="bg-[#161512] border border-[#2d2b25] rounded-xl px-2.5 py-1.5 text-white focus:outline-none"
+                  className="bg-[#161512] border border-[#2d2b25] rounded-xl px-2.5 py-1.5 text-white focus:outline-none text-xs"
                 >
                   <option value="all">Both Colors</option>
                   <option value="white">As White</option>
@@ -1179,7 +1294,7 @@ export const TrainingApp: React.FC = () => {
                 <select
                   value={statusFilter}
                   onChange={(e) => setStatusFilter(e.target.value as 'all' | 'unsolved' | 'solved')}
-                  className="bg-[#161512] border border-[#2d2b25] rounded-xl px-2.5 py-1.5 text-white focus:outline-none"
+                  className="bg-[#161512] border border-[#2d2b25] rounded-xl px-2.5 py-1.5 text-white focus:outline-none text-xs"
                 >
                   <option value="all">All Puzzles</option>
                   <option value="unsolved">Unsolved Only</option>
@@ -1231,22 +1346,6 @@ export const TrainingApp: React.FC = () => {
                   </div>
                 );
               })}
-            </div>
-
-            <div className="pt-2 border-t border-[#2d2b25] flex justify-between items-center text-xs text-[#7e7b73]">
-              <button
-                onClick={() => {
-                  if (confirm('Reset solved puzzle progress and streak?')) {
-                    setSolvedIds(new Set());
-                    setStreak(0);
-                    localStorage.removeItem('thetrainer_solved_puzzles');
-                    localStorage.removeItem('thetrainer_streak');
-                  }
-                }}
-                className="hover:text-rose-400 transition"
-              >
-                Reset Progress
-              </button>
             </div>
           </div>
         </div>
